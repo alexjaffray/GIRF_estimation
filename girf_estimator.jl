@@ -1,35 +1,36 @@
-using MRIReco, DSP, NIfTI, FiniteDifferences, PyPlot, Waveforms, Distributions, ImageFiltering
+using MRIReco, DSP, NIfTI, FiniteDifferences, PyPlot, Waveforms, Distributions, ImageFiltering, Flux, CUDA
 
 pygui(true)
 
-testTrajectory = SpiralTrajectoryVarDens(4,128*128)
-testK = testTrajectory.nodes
 
-figure()
-plot(testK[1,:],testK[2,:])
+# figure()
+# plot(testK[1,:],testK[2,:])
 
-gradTrainX = diff(testK[1,:])
-gradTrainY = diff(testK[2,:])
 
 function filterGradientWaveForms(G,theta)
 
-    conv(G, theta)
+    imfilter(G,reflect(centered(theta)),Fill(0))
 
 end
 
-ker = rand()
+
+function predictPerturbedTrajectory(x)
+
+
+
+end
+
+
+function simulatePerfectRecon(EH,b₀)
+
+    EH * b₀
+
+end
+
+ker = rand(30)
 ker = ker ./ sum(ker)
-#ker = ImageFiltering.Kernel.gaussian((30,))
 
-filteredWaveformX = filterGradientWaveForms(gradTrainX,ker)
-filteredWaveformY = filterGradientWaveForms(gradTrainY,ker)
-
-trajectoryX = cumsum(filteredWaveformX)
-trajectoryY = cumsum(filteredWaveformY)
-
-figure()
-scatter(trajectoryX, trajectoryY)
-scatter(testK[1,:], testK[2,:])
+#ker = ImageFiltering.Kernel.gaussian(30) 
 
 ## Test Setting Up Simulation (forward sim)
 
@@ -49,19 +50,27 @@ params[:AQ] = 3.0e-2
 # do simulation
 acqData = simulation(I, params)
 
+# Define Perfect Reconstruction Operation 
+
 testOp = NFFTOp((256,256), acqData.traj[1])
 testOp2 = adjoint(testOp)
 
-recon1 = testOp2*vec(acqData.kdata[1])
+recon1 = simulatePerfectRecon(testOp2, vec(acqData.kdata[1]))
 
 figure()
 scatter(acqData.traj[1].nodes[1,:], acqData.traj[1].nodes[2,:])
 
+oldNodesX = acqData.traj[1].nodes[1,:]
+oldNodesY = acqData.traj[1].nodes[2,:]
+
 filteredWaveformX = filterGradientWaveForms(diff(acqData.traj[1].nodes[1,:]),ker)
 filteredWaveformY = filterGradientWaveForms(diff(acqData.traj[1].nodes[2,:]),ker)
 
-acqData.traj[1].nodes[1,:] = cumsum(filteredWaveformX)[1:65536]
-acqData.traj[1].nodes[2,:] = cumsum(filteredWaveformY)[1:65536]
+newNodesY = prepend!(vec(cumsum(filteredWaveformY)),[0.0])
+newNodesX = prepend!(vec(cumsum(filteredWaveformX)),[0.0])
+
+acqData.traj[1].nodes[1,:] = newNodesX
+acqData.traj[1].nodes[2,:] = newNodesY
 
 scatter(acqData.traj[1].nodes[1,:], acqData.traj[1].nodes[2,:])
 
@@ -70,11 +79,11 @@ testOp4 = adjoint(testOp3)
 
 recon2 = testOp4*vec(acqData.kdata[1])
 
-error = sum(vec(abs.(recon2)-abs.(recon1)))./sum(vec(abs.(recon1)))
+error = mse(recon1,recon2)
 
 figure()
 plot(error)
 
-
-
+figure()
+plot(sqrt.(abs2.(oldNodesX) + abs2.(oldNodesY)) - sqrt.(abs2.(newNodesX) .+ abs2.(newNodesY)))
 
