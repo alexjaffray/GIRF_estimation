@@ -87,3 +87,8 @@ plot(error)
 figure()
 plot(sqrt.(abs2.(oldNodesX) + abs2.(oldNodesY)) - sqrt.(abs2.(newNodesX) .+ abs2.(newNodesY)))
 
+
+
+# Test The layer Idea
+layer = Conv((1,5),1=>8,identity; bias=true, pad=SamePad())
+testDat = reshape(oldNodesX,1,256*256,1,1)
