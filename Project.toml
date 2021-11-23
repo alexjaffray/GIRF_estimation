@@ -1,0 +1,9 @@
+[deps]
+DSP = "717857b8-e6f2-59f4-9121-6e50c889abd2"
+Dierckx = "39dd38d3-220a-591b-8e3c-4c3a8c710a94"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+ImageFiltering = "6a3955dd-da59-5b1f-98d4-e7296123deb5"
+MRIReco = "bdf86e05-2d2b-5731-a332-f3fe1f9e047f"
+NIfTI = "a3a9e032-41b5-5fc4-967a-a6b7a19844d3"
+Waveforms = "cb13b1c6-351e-5134-b3ad-d6a530956a82"
