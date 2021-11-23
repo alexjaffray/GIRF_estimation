@@ -39,16 +39,16 @@ I = shepp_logan(N)
 I = circularShutterFreq!(I,1)
 
 # simulation parameters
-params = Dict{Symbol, Any}()
-params[:simulation] = "explicit"
-params[:trajName] = "Spiral"
-params[:numProfiles] = 1
-params[:numSamplingPerProfile] = N*N
-params[:windings] = 128
-params[:AQ] = 3.0e-2
+parameters = Dict{Symbol, Any}()
+parameters[:simulation] = "explicit"
+parameters[:trajName] = "Spiral"
+parameters[:numProfiles] = 1
+parameters[:numSamplingPerProfile] = N*N
+parameters[:windings] = 128
+parameters[:AQ] = 3.0e-2
 
 # do simulation
-acqData = simulation(I, params)
+acqData = simulation(I, parameters)
 
 # Define Perfect Reconstruction Operation 
 
@@ -90,5 +90,5 @@ plot(sqrt.(abs2.(oldNodesX) + abs2.(oldNodesY)) - sqrt.(abs2.(newNodesX) .+ abs2
 
 
 # Test The layer Idea
-layer = Conv((1,5),1=>8,identity; bias=true, pad=SamePad())
+layer = Conv((1,30),1=>30,identity; bias=true, pad=SamePad())
 testDat = reshape(oldNodesX,1,256*256,1,1)
