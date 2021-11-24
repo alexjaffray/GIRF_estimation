@@ -1,4 +1,4 @@
-using MRIReco, DSP, NIfTI, FiniteDifferences, PyPlot, Waveforms, Distributions, ImageFiltering, Flux, CUDA, NFFT
+using MRIReco, DSP, NIfTI, FiniteDifferences, PyPlot, Waveforms, Distributions, ImageFiltering, Flux, CUDA, NFFT, Zygote
 
 pygui(true)
 
@@ -27,7 +27,7 @@ ker = ker ./ sum(ker)
 
 ## Test Setting Up Simulation (forward sim)
 
-N = 256
+N = 128
 I = shepp_logan(N)
 I = circularShutterFreq!(I, 1)
 
@@ -37,7 +37,7 @@ parameters[:simulation] = "explicit"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = N * N
-parameters[:windings] = 128
+parameters[:windings] = 32
 parameters[:AQ] = 3.0e-2
 
 # do simulation
@@ -45,7 +45,7 @@ acqData = simulation(I, parameters)
 
 # Define Perfect Reconstruction Operation 
 
-testOp = ExplicitOp((N, N), acqData.traj[1], Array{ComplexF64}(undef, 0, 0))
+testOp = NFFTOp((N, N), acqData.traj[1])
 testOp2 = adjoint(testOp)
 
 recon1 = simulatePerfectRecon(testOp2, vec(acqData.kdata[1]))
@@ -67,7 +67,7 @@ acqData.traj[1].nodes[2, :] = newNodesY
 
 scatter(acqData.traj[1].nodes[1, :], acqData.traj[1].nodes[2, :])
 
-testOp3 = ExplicitOp((N, N), acqData.traj[1], Array{ComplexF64}(undef, 0, 0))
+testOp3 = NFFTOp((N, N), acqData.traj[1])
 testOp4 = adjoint(testOp3)
 
 recon2 = testOp4 * vec(acqData.kdata[1])
@@ -80,51 +80,54 @@ plot(error)
 figure()
 plot(sqrt.(abs2.(oldNodesX) + abs2.(oldNodesY)) - sqrt.(abs2.(newNodesX) .+ abs2.(newNodesY)))
 
+## Test the layer idea
 layer = Conv((1, 200), 1 => 1, pad = SamePad())
-
 model = Chain(layer)
 
-# # Test The layer Idea
-# layer = Conv((1,30),1=>30,identity; bias=true, pad=SamePad())
-# testDat = reshape(oldNodesX,1,256*256,1,1)
 
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = testOp2 * vec(acqData.kdata[1])
 
-function doOp(x, data)
+function doOp(x,nodes, data)
 
-    op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
+    y = deepcopy(x)
+    y.nodes[1,:] = nodes[1,:]
+
+    op = NFFTOp((N, N), x)
     op \ data
 
 end
 
-Zygote.@adjoint function doOp(x, data)
+Zygote.@adjoint function doOp(x₂, nodes2, data)
 
-    op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
+    x = deepcopy(x₂)
+    x.nodes[1,:] = nodes2[1,:]
 
-    opResult = op \ data
+    op = NFFTOp((N, N), x)
 
-    function back(ΔopResult)
-        B̄ = op' \ ΔopResult
+    y = op \ data
 
-        return (-B̄ * opResult', B̄)
+    function back(Δy)
+        B̄ = op' \ Δy
+
+        return (-B̄ * y', B̄)
 
     end
 
-    return opResult, back 
+    return y, back 
 
 end
 
 function getPrediction(x, data)
 
     nodesX = reshapeNodes(x.nodes[1, :])
-    x.nodes[1, :] = vec(model(nodesX))
-
+    newNodes = vec(model(nodesX))
+    
     doOp(x,data)
 
     # Change two lines -> 
-    # op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
+    # op = NFFTOp((N, N), x)
     # op \ data
 
 end
@@ -144,7 +147,7 @@ end
 parameters = Flux.params(model)
 
 opt = Descent()
-# Flux.train!(loss, parameters, [(trajRef, reconRef)], opt)
+Flux.train!(loss, parameters, [(trajRef, reconRef)], opt)
 
 # NOTE: Current implementation of the NFFTOp relies on FFTW calls and so is inherently not autodifferentiable without adding custom Adjoint. Need to ask Jon about this tomorrow. 
 # Can also do the operation explicitly and it just takes a very long time...
@@ -170,21 +173,15 @@ end
 
 function constructE!(E, positions::Matrix, nodes::Matrix)
 
-    @time phi = nodes'*positions'
+    phi = nodes'*positions'
 
-    @time Threads.@threads for i in eachindex(phi)
-        E[i] = cispi(-2*phi[i])
-    end
+    E .= exp.(-2*1im*pi*phi)
 
 end
 
-function constructEAdjoint!(EAdj, positions::Matrix, nodes::Matrix)
+function E_adjoint(E)
 
-    @time phi = positions*nodes
-
-    @time Threads.@threads for i in eachindex(phi)
-        EAdj[i] = cispi(2*phi[i])
-    end
+    transpose(conj.(E))
 
 end
 
