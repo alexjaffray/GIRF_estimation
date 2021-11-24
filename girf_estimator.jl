@@ -14,13 +14,6 @@ function filterGradientWaveForms(G,theta)
 end
 
 
-function predictPerturbedTrajectory(x)
-
-
-
-end
-
-
 function simulatePerfectRecon(EH,b₀)
 
     EH * b₀
@@ -87,8 +80,33 @@ plot(error)
 figure()
 plot(sqrt.(abs2.(oldNodesX) + abs2.(oldNodesY)) - sqrt.(abs2.(newNodesX) .+ abs2.(newNodesY)))
 
+layer = Conv((1,30),1=>30,pad=SamePad())
+layer2 = ConvTranspose((1,5),30=>7, pad=SamePad())
+layer3 = ConvTranspose((1,6),7=>1, pad = SamePad())
 
+model = Chain(layer,layer2,layer3)
 
-# Test The layer Idea
-layer = Conv((1,30),1=>30,identity; bias=true, pad=SamePad())
-testDat = reshape(oldNodesX,1,256*256,1,1)
+# # Test The layer Idea
+# layer = Conv((1,30),1=>30,identity; bias=true, pad=SamePad())
+# testDat = reshape(oldNodesX,1,256*256,1,1)
+
+trajRef = deepcopy(acqData.traj[1])
+dataRef = deepcopy(vec(acqData.kdata[1]))
+reconRef = testOp2 * vec(acqData.kdata[1])
+
+function getPrediction(x)
+
+    nodesX = reshapeNodes(x.nodes[1,:])
+    x.nodes[1,:] = vec(model(nodesX))
+    return x
+
+end
+
+function reshapeNodes(x)
+
+    reshape(x, 1,length(x),1,1)
+
+end
+
+loss(x,y) = Flux.Losses.mae(adjoint(NFFTOp((256,256),getPrediction(x)))*dataRef, y)
+
