@@ -1,4 +1,4 @@
-using MRIReco, DSP, NIfTI, FiniteDifferences, PyPlot, Waveforms, Distributions, ImageFiltering, Flux, CUDA
+using MRIReco, DSP, NIfTI, FiniteDifferences, PyPlot, Waveforms, Distributions, ImageFiltering, Flux, CUDA, NFFT
 
 pygui(true)
 
@@ -80,11 +80,9 @@ plot(error)
 figure()
 plot(sqrt.(abs2.(oldNodesX) + abs2.(oldNodesY)) - sqrt.(abs2.(newNodesX) .+ abs2.(newNodesY)))
 
-layer = Conv((1,30),1=>30,pad=SamePad())
-layer2 = ConvTranspose((1,5),30=>7, pad=SamePad())
-layer3 = ConvTranspose((1,6),7=>1, pad = SamePad())
+layer = Conv((1,200),1=>1,pad=SamePad())
 
-model = Chain(layer,layer2,layer3)
+model = Chain(layer)
 
 # # Test The layer Idea
 # layer = Conv((1,30),1=>30,identity; bias=true, pad=SamePad())
@@ -94,11 +92,12 @@ trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = testOp2 * vec(acqData.kdata[1])
 
-function getPrediction(x)
+function getPrediction(x, data)
 
     nodesX = reshapeNodes(x.nodes[1,:])
     x.nodes[1,:] = vec(model(nodesX))
-    return x
+    op = NFFTOp((256,256),x)
+    op \ data
 
 end
 
@@ -108,5 +107,22 @@ function reshapeNodes(x)
 
 end
 
-loss(x,y) = Flux.Losses.mae(adjoint(NFFTOp((256,256),getPrediction(x)))*dataRef, y)
+function loss(x,y)
 
+    Flux.Losses.mae(getPrediction(x, dataRef), y)
+
+end
+
+parameters = Flux.params(model)
+
+opt = Descent()
+Flux.train!(loss, parameters, [(trajRef, reconRef)], opt)
+
+M, N = 1024, 16
+x = rand(2, M) .- 0.5
+fHat = randn(ComplexF64,M)
+p = plan_nfft(x, (N,N))
+f = nfft_adjoint(p, fHat)
+g = nfft(p, f)
+
+# NOTE: Current implementation of the NFFTOp relies on FFTW calls and so is inherently not autodifferentiable without adding custom Adjoint. Need to ask Jon about this tomorrow. 
