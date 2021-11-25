@@ -102,6 +102,51 @@ function vecvec_to_matrix(vecvec)
     return my_array
 end
 
+function doOp(x, data)
+
+    op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
+    op \ data
+
+end
+
+Zygote.@adjoint function doOp(x, data)
+
+    op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
+
+    opResult = op \ data
+
+    function back(ΔopResult)
+        B̄ = op' \ ΔopResult
+
+        return (-B̄ * opResult', B̄)
+
+    end
+
+    return opResult, back
+
+end
+
+function getPrediction(x, data)
+
+    nodesX = reshapeNodes(x.nodes[1, :])
+    x.nodes[1, :] = vec(model(nodesX))
+
+    doOp(x, data)
+
+end
+
+function reshapeNodes(x)
+
+    reshape(x, 1, length(x), 1, 1)
+
+end
+
+function loss(x, y)
+
+    Flux.Losses.mae(getPrediction(x, dataRef), y)
+
+end
+
 ## Generate Ground Truth Filtering Kernel
 ker = rand(6)
 ker = ker ./ sum(ker)
@@ -170,51 +215,6 @@ model = Chain(layer)
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = recon1
-
-function doOp(x, data)
-
-    op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
-    op \ data
-
-end
-
-Zygote.@adjoint function doOp(x, data)
-
-    op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
-
-    opResult = op \ data
-
-    function back(ΔopResult)
-        B̄ = op' \ ΔopResult
-
-        return (-B̄ * opResult', B̄)
-
-    end
-
-    return opResult, back
-
-end
-
-function getPrediction(x, data)
-
-    nodesX = reshapeNodes(x.nodes[1, :])
-    x.nodes[1, :] = vec(model(nodesX))
-
-    doOp(x, data)
-
-end
-
-function reshapeNodes(x)
-
-    reshape(x, 1, length(x), 1, 1)
-
-end
-
-function loss(x, y)
-
-    Flux.Losses.mae(getPrediction(x, dataRef), y)
-
-end
 
 ## Do Training of Model for one iteration
 parameters = Flux.params(model)
