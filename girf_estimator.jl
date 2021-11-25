@@ -8,7 +8,8 @@ using MRIReco,
     ImageFiltering,
     Flux,
     CUDA,
-    NFFT
+    NFFT,
+    Zygote
 
 pygui(true)
 
@@ -70,10 +71,8 @@ function vecvec_to_matrix(vecvec)
     return my_array
 end
 
-ker = rand(30)
+ker = rand(60)
 ker = ker ./ sum(ker)
-
-#ker = ImageFiltering.Kernel.gaussian(30) 
 
 ## Test Setting Up Simulation (forward sim)
 N = 192
