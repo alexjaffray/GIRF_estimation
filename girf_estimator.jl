@@ -19,31 +19,30 @@ pygui(true)
 
 ## Plot the Euclidean error between the two trajectories
 
-function plotTrajectoryError(x,y)
+function plotTrajectoryError(x, y)
     figure("Pointwise Trajectory Error")
-    plot(sqrt.(abs2.(y[1,:]) .+ abs2.(y[1,:]) - sqrt.(abs2.(x[1,:]) + abs2.(x[2,:]))))
+    plot(sqrt.(abs2.(y[1, :]) .+ abs2.(y[1, :]) - sqrt.(abs2.(x[1, :]) + abs2.(x[2, :]))))
     xlabel("Sample Index")
     ylabel("Euclidean Distance between Nominal and Actual Positions")
 end
 
-function plotError(x,y, sh)
+function plotError(x, y, sh)
 
-    fig = figure("Voxel-wise Reconstruction Errors", figsize=(10,4))
-    absErrorTerm = Flux.Losses.mae.(abs.(x), abs.(y))./abs.(x)
-    angleErrorTerm = Flux.Losses.mae.(angle.(x),angle.(y))
+    fig = figure("Voxel-wise Reconstruction Errors", figsize = (10, 4))
+    absErrorTerm = Flux.Losses.mae.(abs.(x), abs.(y)) ./ abs.(x)
+    angleErrorTerm = Flux.Losses.mae.(angle.(x), angle.(y))
 
-    reshapedMag = reshape(absErrorTerm,sh[1],sh[2])
-    reshapedAngle = reshape(angleErrorTerm,sh[1],sh[2])
+    reshapedMag = reshape(absErrorTerm, sh[1], sh[2])
+    reshapedAngle = reshape(angleErrorTerm, sh[1], sh[2])
 
     subplot(121)
     title("Magnitude Error")
-    imshow(reshapedMag, vmin=0,vmax=1.0,cmap="jet")
+    imshow(reshapedMag, vmin = 0, vmax = 1.0, cmap = "jet")
     colorbar()
-    
 
     subplot(122)
     title("Phase Error")
-    imshow(reshapedAngle,vmin=0.0,vmax=pi,cmap="jet")
+    imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "jet")
     colorbar()
 
 end
@@ -113,7 +112,7 @@ M = 186
 
 imShape = (N, M)
 
-I = Float64.(TestImages.testimage("mri_stack"))[:,:,13]
+I = Float64.(TestImages.testimage("mri_stack"))[:, :, 13]
 #I = circularShutterFreq!(I, 1)
 
 ## Simulation parameters
@@ -158,7 +157,7 @@ EAdj, positions = prepareE(imShape)
 constructEAdjoint!(EAdj, positions, acqData.traj[1].nodes)
 recon2 = EAdj * acqData.kdata[1]
 
-plotError(recon1,recon2,imShape)
+plotError(recon1, recon2, imShape)
 
 ## Define ML Model
 layer = Conv((1, 200), 1 => 1, pad = SamePad())
