@@ -37,7 +37,7 @@ parameters[:simulation] = "explicit"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = N * N
-parameters[:windings] = 32
+parameters[:windings] = 96
 parameters[:AQ] = 3.0e-2
 
 # do simulation
@@ -147,7 +147,7 @@ end
 parameters = Flux.params(model)
 
 opt = Descent()
-Flux.train!(loss, parameters, [(trajRef, reconRef)], opt)
+#Flux.train!(loss, parameters, [(trajRef, reconRef)], opt)
 
 # NOTE: Current implementation of the NFFTOp relies on FFTW calls and so is inherently not autodifferentiable without adding custom Adjoint. Need to ask Jon about this tomorrow. 
 # Can also do the operation explicitly and it just takes a very long time...
