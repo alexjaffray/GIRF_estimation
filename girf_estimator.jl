@@ -9,12 +9,44 @@ using MRIReco,
     Flux,
     CUDA,
     NFFT,
-    Zygote
+    Zygote,
+    TestImages
 
 pygui(true)
 
 # figure()
 # plot(testK[1,:],testK[2,:])
+
+## Plot the Euclidean error between the two trajectories
+
+function plotTrajectoryError(x,y)
+    figure("Pointwise Trajectory Error")
+    plot(sqrt.(abs2.(y[1,:]) .+ abs2.(y[1,:]) - sqrt.(abs2.(x[1,:]) + abs2.(x[2,:]))))
+    xlabel("Sample Index")
+    ylabel("Euclidean Distance between Nominal and Actual Positions")
+end
+
+function plotError(x,y, sh)
+
+    fig = figure("Voxel-wise Reconstruction Errors", figsize=(10,4))
+    absErrorTerm = Flux.Losses.mae.(abs.(x), abs.(y))./abs.(x)
+    angleErrorTerm = Flux.Losses.mae.(angle.(x),angle.(y))
+
+    reshapedMag = reshape(absErrorTerm,sh[1],sh[2])
+    reshapedAngle = reshape(angleErrorTerm,sh[1],sh[2])
+
+    subplot(121)
+    title("Magnitude Error")
+    imshow(reshapedMag, vmin=0,vmax=1.0,cmap="jet")
+    colorbar()
+    
+
+    subplot(122)
+    title("Phase Error")
+    imshow(reshapedAngle,vmin=0.0,vmax=pi,cmap="jet")
+    colorbar()
+
+end
 
 function filterGradientWaveForms(G, theta)
 
@@ -71,31 +103,33 @@ function vecvec_to_matrix(vecvec)
     return my_array
 end
 
-ker = rand(60)
+## Generate Ground Truth Filtering Kernel
+ker = rand(6)
 ker = ker ./ sum(ker)
 
 ## Test Setting Up Simulation (forward sim)
-N = 192
+N = 226
+M = 186
 
-imShape = (N, N)
+imShape = (N, M)
 
-I = shepp_logan(N)
-I = circularShutterFreq!(I, 1)
+I = Float64.(TestImages.testimage("mri_stack"))[:,:,13]
+#I = circularShutterFreq!(I, 1)
 
 ## Simulation parameters
 parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = N * N
-parameters[:windings] = 96
+parameters[:numSamplingPerProfile] = N * M
+parameters[:windings] = 128
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
 acqData = simulation(I, parameters)
 
 ## Define Perfect Reconstruction
-EAdj₀, positions = prepareE((N, N))
+EAdj₀, positions = prepareE(imShape)
 constructEAdjoint!(EAdj₀, positions, acqData.traj[1].nodes)
 recon1 = EAdj₀ * acqData.kdata[1]
 
@@ -120,18 +154,11 @@ acqData.traj[1].nodes[2, :] = newNodesY
 scatter(acqData.traj[1].nodes[1, :], acqData.traj[1].nodes[2, :])
 
 ## Reconstruct with perturbed nodes
-EAdj, positions = prepareE((N, N))
+EAdj, positions = prepareE(imShape)
 constructEAdjoint!(EAdj, positions, acqData.traj[1].nodes)
 recon2 = EAdj * acqData.kdata[1]
 
-## Calculate Error between the two reconstructions
-error = mse(recon1, recon2)
-
-## Plot the Euclidean error between the two trajectories
-figure()
-plot(
-    sqrt.(abs2.(newNodesX) .+ abs2.(newNodesY))- sqrt.(abs2.(oldNodesX) + abs2.(oldNodesY))
-)
+plotError(recon1,recon2,imShape)
 
 ## Define ML Model
 layer = Conv((1, 200), 1 => 1, pad = SamePad())
@@ -194,9 +221,6 @@ end
 parameters = Flux.params(model)
 opt = Descent()
 # Flux.train!(loss, parameters, [(trajRef, reconRef)], opt)
-
-# NOTE: Current implementation of the NFFTOp relies on FFTW calls and so is inherently not autodifferentiable without adding custom Adjoint. Need to ask Jon about this tomorrow. 
-# Can also do the operation explicitly and it just takes a very long time...
 
 
 
