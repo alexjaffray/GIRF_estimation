@@ -10,9 +10,14 @@ using MRIReco,
     CUDA,
     NFFT,
     Zygote,
-    TestImages
+    TestImages,
+    LinearAlgebra
+
 
 pygui(true)
+
+## Have to set this to the real number of threads because MRIReco.jl seems to set this to 1 when it's loaded :(
+BLAS.set_num_threads(32)
 
 # figure()
 # plot(testK[1,:],testK[2,:])
@@ -20,10 +25,13 @@ pygui(true)
 ## Plot the Euclidean error between the two trajectories
 
 function plotTrajectoryError(x, y)
+
     figure("Pointwise Trajectory Error")
     plot(sqrt.(abs2.(y[1, :]) .+ abs2.(y[1, :]) - sqrt.(abs2.(x[1, :]) + abs2.(x[2, :]))))
+
     xlabel("Sample Index")
     ylabel("Euclidean Distance between Nominal and Actual Positions")
+
 end
 
 function plotError(x, y, sh)
@@ -70,30 +78,111 @@ function prepareE(imShape)
 
 end
 
+## Memory Efficient in-place E constructor
 function constructE!(E, positions::Matrix, nodes::Matrix)
 
-    @time phi = nodes' * positions'
+    phi = nodes' * positions'
 
-    @time Threads.@threads for i in eachindex(phi)
+    # Threads.@threads for i in eachindex(phi)
+    #     E[i] = cispi(-2 * phi[i])
+    # end
+
+    for i in eachindex(phi)
         E[i] = cispi(-2 * phi[i])
     end
 
 end
 
-function constructEAdjoint!(EAdj, positions::Matrix, nodes::Matrix)
+## Memory Efficient in-place EH constructor
+function constructEH!(EH, positions::Matrix, nodes::Matrix)
 
-    @time phi = positions * nodes
+    phi = positions * nodes
 
-    @time Threads.@threads for i in eachindex(phi)
-        EAdj[i] = cispi(2 * phi[i])
+    # Threads.@threads for i in eachindex(phi)
+    #     EH[i] = cispi(2 * phi[i])
+    # end
+
+    for i in eachindex(phi)
+        EH[i] = cispi(2 * phi[i])
     end
 
 end
 
+function EMulx(x, nodes, sh)
+
+    E = constructE(nodes,sh)
+    y = E*x
+
+end
+
+function EHMulx(x, nodes::Matrix, sh::Tuple)
+
+    EH = constructEH(nodes,sh)
+    y = EH*x
+
+end
+
+function constructE(nodes::Matrix, sh::Tuple)
+
+    # construct E
+    E = Array{ComplexF32}(undef, sh[1] * sh[2], sh[1] * sh[2])
+
+    # set up positions according to strong voxel condition
+    x = collect(1:sh[1]) .- sh[1] / 2 .- 1
+    y = collect(1:sh[2]) .- sh[2] / 2 .- 1
+
+    p = Iterators.product(x, y)
+
+    positions = vecvec_to_matrix(vec(collect.(p)))
+
+    phi = nodes' * positions'
+    
+    # Multithreaded
+    # Threads.@threads for i in eachindex(phi)
+    #     E[i] = cispi(-2 * phi[i])
+    # end
+
+    for i in eachindex(phi)
+        E[i] = cispi(-2 * phi[i])
+    end
+
+    return E
+
+end
+
+function constructEH(nodes::Matrix, sh::Tuple)
+
+    # construct E
+    EH = Array{ComplexF32}(undef, sh[1] * sh[2], sh[1] * sh[2])
+
+    # set up positions according to strong voxel condition
+    x = collect(1:sh[1]) .- sh[1] / 2 .- 1
+    y = collect(1:sh[2]) .- sh[2] / 2 .- 1
+
+    p = Iterators.product(x, y)
+
+    positions = vecvec_to_matrix(vec(collect.(p)))
+
+    @time phi = positions * nodes
+
+    # Multithreaded
+    # Threads.@threads for i in eachindex(phi)
+    #     EH[i] = cispi(2 * phi[i])
+    # end
+
+    for i in eachindex(phi)
+        EH[i] = cispi(2 * phi[i])
+    end
+
+    return EH
+
+end
+
+
 function vecvec_to_matrix(vecvec)
     dim1 = length(vecvec)
     dim2 = length(vecvec[1])
-    my_array = zeros(Int64, dim1, dim2)
+    my_array = zeros(Float32, dim1, dim2)
     for i = 1:dim1
         for j = 1:dim2
             my_array[i, j] = vecvec[i][j]
@@ -102,48 +191,56 @@ function vecvec_to_matrix(vecvec)
     return my_array
 end
 
-function doOp(x, data)
+# function doOp(x, data)
 
-    op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
-    op \ data
+#     op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
+#     op \ data
 
-end
+# end
 
-Zygote.@adjoint function doOp(x, data)
+# Zygote.@adjoint function doOp(x, data)
 
-    op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
+#     op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
 
-    opResult = op \ data
+#     opResult = op \ data
 
-    function back(ΔopResult)
-        B̄ = op' \ ΔopResult
+#     function back(ΔopResult)
+#         B̄ = op' \ ΔopResult
 
-        return (-B̄ * opResult', B̄)
+#         return (-B̄ * opResult', B̄)
 
-    end
+#     end
 
-    return opResult, back
+#     return opResult, back
 
-end
+# end
 
-function getPrediction(x, data)
+# function getPrediction(x, data)
 
-    nodesX = reshapeNodes(x.nodes[1, :])
-    x.nodes[1, :] = vec(model(nodesX))
+#     nodesX = reshapeNodes(x.nodes[1, :])
+#     x.nodes[1, :] = vec(model(nodesX))
 
-    doOp(x, data)
+#     doOp(x, data)
 
-end
+# end
 
 function reshapeNodes(x)
 
-    reshape(x, 1, length(x), 1, 1)
+    s = size(x)
+    reshape(x,1, s[2], s[1], 1)
 
 end
 
-function loss(x, y)
+function undoReshape(x)
 
-    Flux.Losses.mae(getPrediction(x, dataRef), y)
+    r = size(x)
+    reshape(x,r[3],r[2])
+
+end
+
+function loss(x, y, nodes, shape)
+
+    Flux.Losses.mae(EHMulx(x, undoReshape(model(nodes)), shape), y)
 
 end
 
@@ -152,8 +249,8 @@ ker = rand(6)
 ker = ker ./ sum(ker)
 
 ## Test Setting Up Simulation (forward sim)
-N = 226
-M = 186
+N = 32
+M = 32
 
 imShape = (N, M)
 
@@ -166,16 +263,15 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = N * M
-parameters[:windings] = 128
+parameters[:windings] = 16
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
 acqData = simulation(I, parameters)
 
 ## Define Perfect Reconstruction
-EAdj₀, positions = prepareE(imShape)
-constructEAdjoint!(EAdj₀, positions, acqData.traj[1].nodes)
-recon1 = EAdj₀ * acqData.kdata[1]
+
+@time recon1 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,imShape)
 
 ## Plot the actual nodes used for the perfect reconstruction
 figure()
@@ -198,14 +294,12 @@ acqData.traj[1].nodes[2, :] = newNodesY
 scatter(acqData.traj[1].nodes[1, :], acqData.traj[1].nodes[2, :])
 
 ## Reconstruct with perturbed nodes
-EAdj, positions = prepareE(imShape)
-constructEAdjoint!(EAdj, positions, acqData.traj[1].nodes)
-recon2 = EAdj * acqData.kdata[1]
+recon2 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,imShape)
 
 plotError(recon1, recon2, imShape)
 
 ## Define ML Model
-layer = Conv((1, 200), 1 => 1, pad = SamePad())
+layer = Conv((1, 200), 2 => 2, pad = SamePad())
 model = Chain(layer)
 
 # # Test The layer Idea
@@ -214,12 +308,13 @@ model = Chain(layer)
 
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
-reconRef = recon1
+reconRef = deepcopy(recon1)
+nodesRef = deepcopy(reshapeNodes(trajRef.nodes))
 
 ## Do Training of Model for one iteration
 parameters = Flux.params(model)
 opt = Descent()
-# Flux.train!(loss, parameters, [(trajRef, reconRef)], opt)
+Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, imShape)], opt)
 
 
 
