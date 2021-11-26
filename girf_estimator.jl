@@ -116,7 +116,7 @@ function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float32})
 
     @tullio y[k] := x[n]*exp(-1im * Float64.(pi) * 2 * positions[n,i]*nodes[i,k])
 
-    @tullio debug[n,k] := positions[n,i]*nodes[i,k]
+    @tullio debug[k,n] := positions[n,i]'*nodes[i,k]'
 
     return y
 
