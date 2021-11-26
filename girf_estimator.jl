@@ -66,74 +66,51 @@ function prepareE(imShape)
     # construct E in place
     E = Array{ComplexF32}(undef, imShape[1] * imShape[2], imShape[1] * imShape[2])
 
-    # set up positions according to strong voxel condition
-    x = collect(1:imShape[1]) .- imShape[1] / 2 .- 1
-    y = collect(1:imShape[2]) .- imShape[2] / 2 .- 1
-
-    p = Iterators.product(x, y)
-
-    positions = vecvec_to_matrix(vec(collect.(p)))
+    positions = getPositions(imShape)
 
     return E, positions
 
 end
 
-## Memory Efficient in-place E constructor
+## Memory Efficient Multi-threaded in-place E constructor
 function constructE!(E, positions::Matrix, nodes::Matrix)
 
     phi = nodes' * positions'
 
-    # Threads.@threads for i in eachindex(phi)
-    #     E[i] = cispi(-2 * phi[i])
-    # end
-
-    for i in eachindex(phi)
+    Threads.@threads for i in eachindex(phi)
         E[i] = cispi(-2 * phi[i])
     end
 
 end
 
-## Memory Efficient in-place EH constructor
+## Memory Efficient Multi-threaded in-place EH constructor
 function constructEH!(EH, positions::Matrix, nodes::Matrix)
 
     phi = positions * nodes
 
-    # Threads.@threads for i in eachindex(phi)
-    #     EH[i] = cispi(2 * phi[i])
-    # end
-
-    for i in eachindex(phi)
+    Threads.@threads for i in eachindex(phi)
         EH[i] = cispi(2 * phi[i])
     end
 
 end
 
-function EMulx(x, nodes, sh)
+function EMulx(x, nodes::Matrix, positions::Matrix)
 
-    E = constructE(nodes,sh)
+    E = constructE(nodes,positions)
     y = E*x
+    return y
 
 end
 
-function EHMulx(x, nodes::Matrix, sh::Tuple)
+function EHMulx(x, nodes::Matrix, positions::Matrix)
 
-    EH = constructEH(nodes,sh)
+    EH = constructEH(nodes,positions)
     y = EH*x
+    return y
 
 end
 
-function constructE(nodes::Matrix, sh::Tuple)
-
-    # construct E
-    E = Array{ComplexF32}(undef, sh[1] * sh[2], sh[1] * sh[2])
-
-    # set up positions according to strong voxel condition
-    x = collect(1:sh[1]) .- sh[1] / 2 .- 1
-    y = collect(1:sh[2]) .- sh[2] / 2 .- 1
-
-    p = Iterators.product(x, y)
-
-    positions = vecvec_to_matrix(vec(collect.(p)))
+function constructE(nodes::Matrix, positions::Matrix)
 
     phi = nodes' * positions'
     
@@ -142,53 +119,58 @@ function constructE(nodes::Matrix, sh::Tuple)
     #     E[i] = cispi(-2 * phi[i])
     # end
 
-    for i in eachindex(phi)
-        E[i] = cispi(-2 * phi[i])
-    end
+    E = cispi.(-2 * phi[i])
 
     return E
 
 end
 
-function constructEH(nodes::Matrix, sh::Tuple)
+function constructEH(nodes::Matrix, positions::Matrix)
 
-    # construct E
-    EH = Array{ComplexF32}(undef, sh[1] * sh[2], sh[1] * sh[2])
-
-    # set up positions according to strong voxel condition
-    x = collect(1:sh[1]) .- sh[1] / 2 .- 1
-    y = collect(1:sh[2]) .- sh[2] / 2 .- 1
-
-    p = Iterators.product(x, y)
-
-    positions = vecvec_to_matrix(vec(collect.(p)))
-
-    @time phi = positions * nodes
+    phi = positions * nodes
 
     # Multithreaded
     # Threads.@threads for i in eachindex(phi)
     #     EH[i] = cispi(2 * phi[i])
     # end
 
-    for i in eachindex(phi)
-        EH[i] = cispi(2 * phi[i])
-    end
+    EH = cispi.(2 * phi)
 
     return EH
 
 end
 
-
 function vecvec_to_matrix(vecvec)
+
     dim1 = length(vecvec)
     dim2 = length(vecvec[1])
+
     my_array = zeros(Float32, dim1, dim2)
+
+    buf = Zygote.Buffer(my_array, dim1, dim2)
+
     for i = 1:dim1
         for j = 1:dim2
-            my_array[i, j] = vecvec[i][j]
+            buf[i, j] = vecvec[i][j]
         end
     end
-    return my_array
+
+    return copy(buf)
+
+end
+
+function getPositions(sh::Tuple)
+
+     # set up positions according to strong voxel condition
+     x = collect(1:sh[1]) .- sh[1] / 2 .- 1
+     y = collect(1:sh[2]) .- sh[2] / 2 .- 1
+ 
+     p = Iterators.product(x, y)
+ 
+     positions = vecvec_to_matrix(vec(collect.(p)))
+
+     return positions
+
 end
 
 # function doOp(x, data)
@@ -238,9 +220,9 @@ function undoReshape(x)
 
 end
 
-function loss(x, y, nodes, shape)
+function loss(x, y, nodes, positions)
 
-    Flux.Losses.mae(EHMulx(x, undoReshape(model(nodes)), shape), y)
+    Flux.Losses.mae(EHMulx(x, undoReshape(model(nodes)),positions), y)
 
 end
 
@@ -249,8 +231,8 @@ ker = rand(6)
 ker = ker ./ sum(ker)
 
 ## Test Setting Up Simulation (forward sim)
-N = 32
-M = 32
+N = 16
+M = 16
 
 imShape = (N, M)
 
@@ -263,15 +245,17 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = N * M
-parameters[:windings] = 16
+parameters[:windings] = 8
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
 acqData = simulation(I, parameters)
 
+positions = getPositions(imShape)
+
 ## Define Perfect Reconstruction
 
-@time recon1 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,imShape)
+@time recon1 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,positions)
 
 ## Plot the actual nodes used for the perfect reconstruction
 figure()
@@ -294,12 +278,12 @@ acqData.traj[1].nodes[2, :] = newNodesY
 scatter(acqData.traj[1].nodes[1, :], acqData.traj[1].nodes[2, :])
 
 ## Reconstruct with perturbed nodes
-recon2 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,imShape)
+recon2 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,positions)
 
 plotError(recon1, recon2, imShape)
 
 ## Define ML Model
-layer = Conv((1, 200), 2 => 2, pad = SamePad())
+layer = Conv((1, 20), 2 => 2, pad = SamePad())
 model = Chain(layer)
 
 # # Test The layer Idea
@@ -311,10 +295,14 @@ dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon1)
 nodesRef = deepcopy(reshapeNodes(trajRef.nodes))
 
+
 ## Do Training of Model for one iteration
 parameters = Flux.params(model)
 opt = Descent()
-Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, imShape)], opt)
+
+for i = 1:200
+    Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
+end
 
 
 
