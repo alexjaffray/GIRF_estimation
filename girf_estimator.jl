@@ -11,16 +11,14 @@ using MRIReco,
     NFFT,
     Zygote,
     TestImages,
-    LinearAlgebra
+    LinearAlgebra,
+    Tullio
 
 
 pygui(true)
 
 ## Have to set this to the real number of threads because MRIReco.jl seems to set this to 1 when it's loaded :(
 BLAS.set_num_threads(32)
-
-# figure()
-# plot(testK[1,:],testK[2,:])
 
 ## Plot the Euclidean error between the two trajectories
 
@@ -61,6 +59,7 @@ function filterGradientWaveForms(G, theta)
 
 end
 
+## Generic Allocator for the E system matrix
 function prepareE(imShape)
 
     # construct E in place
@@ -94,6 +93,7 @@ function constructEH!(EH, positions::Matrix, nodes::Matrix)
 
 end
 
+## Single Threaded Explicit Passing Version for Autodiff compat. 
 function EMulx(x, nodes::Matrix, positions::Matrix)
 
     E = constructE(nodes,positions)
@@ -102,6 +102,7 @@ function EMulx(x, nodes::Matrix, positions::Matrix)
 
 end
 
+## Single Threaded Explicit Passing Version for Autodiff compat.
 function EHMulx(x, nodes::Matrix, positions::Matrix)
 
     EH = constructEH(nodes,positions)
@@ -110,6 +111,25 @@ function EHMulx(x, nodes::Matrix, positions::Matrix)
 
 end
 
+## Single Threaded Explicit Passing Version for Autodiff compat. 
+function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float32})
+
+    @tullio y[k] := x[n]*exp(-1im * Float64.(pi) * 2 * positions[n,i]*nodes[i,k])
+
+    return y
+
+end
+
+## Single Threaded Explicit Passing Version for Autodiff compat. 
+function EHMulx_Tullio(x, nodes::Matrix, positions::Matrix)
+
+    E = constructE(nodes,positions)
+    y = E*x
+    return y
+
+end
+
+## Single Threaded Explicit Passing Version for Autodiff compat.
 function constructE(nodes::Matrix, positions::Matrix)
 
     phi = nodes' * positions'
@@ -125,6 +145,7 @@ function constructE(nodes::Matrix, positions::Matrix)
 
 end
 
+## Single Threaded Explicit Passing Version for Autodiff compat.
 function constructEH(nodes::Matrix, positions::Matrix)
 
     phi = positions * nodes
@@ -147,15 +168,13 @@ function vecvec_to_matrix(vecvec)
 
     my_array = zeros(Float32, dim1, dim2)
 
-    buf = Zygote.Buffer(my_array, dim1, dim2)
-
     for i = 1:dim1
         for j = 1:dim2
-            buf[i, j] = vecvec[i][j]
+            my_array[i, j] = vecvec[i][j]
         end
     end
 
-    return copy(buf)
+    return my_array
 
 end
 
@@ -236,7 +255,7 @@ M = 16
 
 imShape = (N, M)
 
-I = Float64.(TestImages.testimage("mri_stack"))[:, :, 13]
+I = Float64.(TestImages.testimage("mri_stack"))[101:116,101:116, 13]
 #I = circularShutterFreq!(I, 1)
 
 ## Simulation parameters
@@ -245,7 +264,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = N * M
-parameters[:windings] = 8
+parameters[:windings] = 4
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -283,7 +302,7 @@ recon2 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,positions)
 plotError(recon1, recon2, imShape)
 
 ## Define ML Model
-layer = Conv((1, 20), 2 => 2, pad = SamePad())
+layer = Conv((1, 6), 2 => 2, pad = SamePad())
 model = Chain(layer)
 
 # # Test The layer Idea
@@ -293,16 +312,16 @@ model = Chain(layer)
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon1)
-nodesRef = deepcopy(reshapeNodes(trajRef.nodes))
+nodesRef = Float32.(deepcopy(reshapeNodes(trajRef.nodes)))
 
 
 ## Do Training of Model for one iteration
 parameters = Flux.params(model)
-opt = Descent()
+opt = ADAGrad()
 
-for i = 1:200
-    Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
-end
+# for i = 1:200
+#     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
+# end
 
 
 
