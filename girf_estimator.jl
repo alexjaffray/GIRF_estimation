@@ -1,4 +1,5 @@
-using MRIReco,
+using 
+    MRIReco,
     DSP,
     NIfTI,
     FiniteDifferences,
@@ -13,7 +14,6 @@ using MRIReco,
     TestImages,
     LinearAlgebra,
     Tullio
-
 
 pygui(true)
 
@@ -116,6 +116,8 @@ function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float32})
 
     @tullio y[k] := x[n]*exp(-1im * Float64.(pi) * 2 * positions[n,i]*nodes[i,k])
 
+    @tullio debug[n,k] := positions[n,i]*nodes[i,k]
+
     return y
 
 end
@@ -123,9 +125,11 @@ end
 ## Single Threaded Explicit Passing Version for Autodiff compat. 
 function EHMulx_Tullio(x, nodes::Matrix, positions::Matrix)
 
-    E = constructE(nodes,positions)
-    y = E*x
-    return y
+    @tullio y[n] := x[k]*exp(1im * Float64.(pi) * 2 * nodes[i,k]*positions[n,i])
+
+    @tullio debug[n,k] := nodes[i,k]*positions[n,i]
+
+    return y, debug
 
 end
 
@@ -323,6 +327,7 @@ opt = ADAGrad()
 #     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
 # end
 
+## NEED TO DEBUG @TULLIO
 
 
 
