@@ -13,6 +13,7 @@ using
     Zygote,
     TestImages,
     LinearAlgebra,
+    KernelAbstractions,
     Tullio
 
 pygui(true)
@@ -112,23 +113,20 @@ function EHMulx(x, nodes::Matrix, positions::Matrix)
 end
 
 ## Single Threaded Explicit Passing Version for Autodiff compat. 
-function EMulx_Tullio(x, nodes::Matrix{Float32}, positions::Matrix{Float32})
+function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
-    @tullio dense[n,k] := (-1im * Float32.(pi) * 2 * positions[i,n]*nodes[i,k])
-    @tullio E[n,k] := exp <| (-1im * Float32.(pi) * 2 * positions[i,n]*nodes[i,k])
-    @tullio y[n] := E[n,k]*x[k]
+    @tullio E[k,n] := exp <| (-1im * Float64.(pi) * 2 * nodes[i,k]*positions[i,n])
+    @tullio y[k] := E[k,n]*x[n]
 
-    return y, dense
+    return y
 
 end
 
 ## Single Threaded Explicit Passing Version for Autodiff compat. 
 function EHMulx_Tullio(x, nodes::Matrix, positions::Matrix)
 
-    @tullio EH[k,n] := exp <| (1im * Float32.(pi) * 2 * nodes[i,k]*positions[i,n])
-    @tullio y[k] := E[k,n]*x[n]
-
-    @tullio debug[k,n] := exp(1im * Float32.(pi) * 2 * nodes'[i,k]*positions'[i,n])
+    @tullio EH[n,k] := exp <| (1im * Float64.(pi) * 2 * positions[i,n]*nodes[i,k])
+    @tullio y[n] := EH[n,k]*x[k]
 
     return y
 
@@ -191,7 +189,7 @@ function getPositions(sh::Tuple)
  
      p = Iterators.product(x, y)
  
-     positions = Float32.(vecvec_to_matrix(vec(collect.(p))))
+     positions = collect(Float64.(vecvec_to_matrix(vec(collect.(p))))')
 
      return positions
 
@@ -255,12 +253,12 @@ ker = rand(6)
 ker = ker ./ sum(ker)
 
 ## Test Setting Up Simulation (forward sim)
-N = 16
-M = 16
+N = 127
+M = 128
 
 imShape = (N, M)
 
-I = Float64.(TestImages.testimage("mri_stack"))[101:116,101:116, 13]
+I = Float64.(TestImages.testimage("mri_stack"))[31:158,31:158, 13]
 #I = circularShutterFreq!(I, 1)
 
 ## Simulation parameters
@@ -269,17 +267,17 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = N * M
-parameters[:windings] = 4
+parameters[:windings] = 64
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
 acqData = simulation(I, parameters)
-
 positions = getPositions(imShape)
 
 ## Define Perfect Reconstruction
 
-@time recon1 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,positions)
+@time recon1 = EHMulx_Tullio(acqData.kdata[1],acqData.traj[1].nodes,positions)
+nodesRef = Float64.(deepcopy(acqData.traj[1].nodes))
 
 ## Plot the actual nodes used for the perfect reconstruction
 figure()
@@ -302,8 +300,7 @@ acqData.traj[1].nodes[2, :] = newNodesY
 scatter(acqData.traj[1].nodes[1, :], acqData.traj[1].nodes[2, :])
 
 ## Reconstruct with perturbed nodes
-recon2 = EHMulx(acqData.kdata[1],acqData.traj[1].nodes,positions)
-
+@time recon2 = EHMulx_Tullio(acqData.kdata[1],acqData.traj[1].nodes,positions)
 plotError(recon1, recon2, imShape)
 
 ## Define ML Model
@@ -318,13 +315,7 @@ model = Chain(layer)
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon1)
-nodesRef = Float32.(deepcopy(trajRef.nodes))
-positionsRef = deepcopy(collect(positions'))
-
-ERef, positions = prepareE(imShape)
-constructE!(ERef, nodesRef, positionsRef)
-
-
+positionsRef = deepcopy(collect(positions))
 
 # ## Do Training of Model for one iteration
 # parameters = Flux.params(model)
@@ -333,9 +324,3 @@ constructE!(ERef, nodesRef, positionsRef)
 # for i = 1:200
 #     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
 # end
-
-## NEED TO DEBUG @TULLIO
-
-
-
-
