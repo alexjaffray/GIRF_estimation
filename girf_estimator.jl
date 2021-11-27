@@ -13,7 +13,7 @@ using
     Zygote,
     TestImages,
     LinearAlgebra,
-    KernelAbstractions,
+    #KernelAbstractions,
     Tullio
 
 pygui(true)
@@ -316,6 +316,13 @@ trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon1)
 positionsRef = deepcopy(collect(positions))
+
+# Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
+# See example below: 
+
+# (x...) -> loss(x..., arg1, arg2...)
+
+# gs = gradient((nodesRef)-> 
 
 # ## Do Training of Model for one iteration
 # parameters = Flux.params(model)
