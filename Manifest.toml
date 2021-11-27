@@ -120,12 +120,6 @@ git-tree-sha1 = "9a1d594397670492219635b35a3d830b04730d62"
 uuid = "9e997f8a-9a97-42d5-a9f1-ce6bfc15e2c0"
 version = "0.1.1"
 
-[[CheapThreads]]
-deps = ["ArrayInterface", "IfElse", "Requires", "Static", "StrideArraysCore", "ThreadingUtilities", "VectorizationBase"]
-git-tree-sha1 = "44899e10c2fd8a3c5b907c4b688c04f737d13959"
-uuid = "b630d9fa-e28e-4980-896d-83ce5e2106b2"
-version = "0.2.4"
-
 [[CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
 git-tree-sha1 = "ded953804d019afa9a3f98981d99b33e3db7b6da"
@@ -682,12 +676,6 @@ version = "0.3.5"
 [[Logging]]
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
-[[LoopVectorization]]
-deps = ["ArrayInterface", "CheapThreads", "DocStringExtensions", "IfElse", "LinearAlgebra", "OffsetArrays", "Requires", "SLEEFPirates", "Static", "StrideArraysCore", "ThreadingUtilities", "UnPack", "VectorizationBase"]
-git-tree-sha1 = "2ad016117de05750443ed219dada9df3f9b9fa8f"
-uuid = "bdcacae8-1622-11e9-2a5c-532679323890"
-version = "0.12.18"
-
 [[LowRankApprox]]
 deps = ["FFTW", "FillArrays", "LinearAlgebra", "Nullables", "Random", "SparseArrays", "Test"]
 git-tree-sha1 = "35e31d7e505492cb70b44eacf94e89adf6ef79f6"
@@ -1013,12 +1001,6 @@ version = "1.1.0"
 
 [[SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
-
-[[SLEEFPirates]]
-deps = ["IfElse", "Static", "VectorizationBase"]
-git-tree-sha1 = "2817b7b442884d20065fc5a58b66617861ff5671"
-uuid = "476501e8-09a2-5ece-8869-fb82de89a1fa"
-version = "0.6.20"
 
 [[Scratch]]
 deps = ["Dates"]

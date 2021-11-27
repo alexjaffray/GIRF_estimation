@@ -72,9 +72,9 @@ function prepareE(imShape)
 end
 
 ## Memory Efficient Multi-threaded in-place E constructor
-function constructE!(E, positions::Matrix, nodes::Matrix)
+function constructE!(E, nodes::Matrix, positions::Matrix)
 
-    phi = nodes' * positions'
+    phi = nodes' * positions
 
     Threads.@threads for i in eachindex(phi)
         E[i] = cispi(-2 * phi[i])
@@ -83,9 +83,9 @@ function constructE!(E, positions::Matrix, nodes::Matrix)
 end
 
 ## Memory Efficient Multi-threaded in-place EH constructor
-function constructEH!(EH, positions::Matrix, nodes::Matrix)
+function constructEH!(EH, nodes::Matrix, positions::Matrix)
 
-    phi = positions * nodes
+    phi = positions * nodes'
 
     Threads.@threads for i in eachindex(phi)
         EH[i] = cispi(2 * phi[i])
@@ -112,24 +112,25 @@ function EHMulx(x, nodes::Matrix, positions::Matrix)
 end
 
 ## Single Threaded Explicit Passing Version for Autodiff compat. 
-function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float32})
+function EMulx_Tullio(x, nodes::Matrix{Float32}, positions::Matrix{Float32})
 
-    @tullio y[k] := x[n]*exp(-1im * Float64.(pi) * 2 * positions[n,i]*nodes[i,k])
+    @tullio dense[n,k] := (-1im * Float32.(pi) * 2 * positions[i,n]*nodes[i,k])
+    @tullio E[n,k] := exp <| (-1im * Float32.(pi) * 2 * positions[i,n]*nodes[i,k])
+    @tullio y[n] := E[n,k]*x[k]
 
-    @tullio debug[k,n] := positions[n,i]'*nodes[i,k]'
-
-    return y
+    return y, dense
 
 end
 
 ## Single Threaded Explicit Passing Version for Autodiff compat. 
 function EHMulx_Tullio(x, nodes::Matrix, positions::Matrix)
 
-    @tullio y[n] := x[k]*exp(1im * Float64.(pi) * 2 * nodes[i,k]*positions[n,i])
+    @tullio EH[k,n] := exp <| (1im * Float32.(pi) * 2 * nodes[i,k]*positions[i,n])
+    @tullio y[k] := E[k,n]*x[n]
 
-    @tullio debug[n,k] := nodes[i,k]*positions[n,i]
+    @tullio debug[k,n] := exp(1im * Float32.(pi) * 2 * nodes'[i,k]*positions'[i,n])
 
-    return y, debug
+    return y
 
 end
 
@@ -190,7 +191,7 @@ function getPositions(sh::Tuple)
  
      p = Iterators.product(x, y)
  
-     positions = vecvec_to_matrix(vec(collect.(p)))
+     positions = Float32.(vecvec_to_matrix(vec(collect.(p))))
 
      return positions
 
@@ -313,15 +314,21 @@ model = Chain(layer)
 # layer = Conv((1,30),1=>30,identity; bias=true, pad=SamePad())
 # testDat = reshape(oldNodesX,1,256*256,1,1)
 
+# These should All be Float32 types
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon1)
-nodesRef = Float32.(deepcopy(reshapeNodes(trajRef.nodes)))
+nodesRef = Float32.(deepcopy(trajRef.nodes))
+positionsRef = deepcopy(collect(positions'))
+
+ERef, positions = prepareE(imShape)
+constructE!(ERef, nodesRef, positionsRef)
 
 
-## Do Training of Model for one iteration
-parameters = Flux.params(model)
-opt = ADAGrad()
+
+# ## Do Training of Model for one iteration
+# parameters = Flux.params(model)
+# opt = ADAGrad()
 
 # for i = 1:200
 #     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
