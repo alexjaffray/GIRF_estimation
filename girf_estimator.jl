@@ -7,6 +7,7 @@ using
     Waveforms,
     Distributions,
     ImageFiltering,
+    ImageTransformations,
     Flux,
     CUDA,
     NFFT,
@@ -256,7 +257,7 @@ end
 
 function loss(x, y)
 
-    Flux.Losses.mse(angle.(x),angle.(y))
+    Flux.Losses.mse(abs.(x),abs.(y))
 
 end
 
@@ -270,7 +271,15 @@ M = 186
 
 imShape = (N, M)
 
-I = Float64.(TestImages.testimage("mri_stack"))
+B = Float64.(TestImages.testimage("mri_stack"))[:,:,13]
+
+img_small = ImageTransformations.restrict(B)
+img_medium = ImageTransformations.restrict(img_small)
+
+I_mage = img_medium
+
+imShape = size(I_mage)
+
 #I = circularShutterFreq!(I, 1)
 
 ## Simulation parameters
@@ -278,12 +287,12 @@ parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = N * M
-parameters[:windings] = 8
+parameters[:numSamplingPerProfile] = imShape[1]*imShape[2]
+parameters[:windings] = 16
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
-acqData = simulation(I, parameters)
+acqData = simulation(I_mage, parameters)
 positions = getPositions(imShape)
 
 ## Define Perfect Reconstruction
@@ -318,7 +327,7 @@ scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 plotError(recon1, recon2, imShape)
 
 ## Define ML Model
-layer = Conv((1, 3), 2 => 2, pad = SamePad())
+layer = Conv((1, 10), 2 => 2, pad = SamePad())
 model = Chain(layer)
 
 
@@ -348,8 +357,8 @@ pN_r = reshapeNodes(nodesRef)
 # end
 
 f = 0
-learningRate = 0.0001
-opt = ADAM()
+learningRate = 0.000001
+opt = Descent(learningRate)
 figure()
 
 sqnorm(x) = sum(abs2, x)
@@ -363,7 +372,7 @@ for i = 1:numiters
     local training_loss
     ps = Params(Flux.params(model))
     gs = gradient(ps) do
-        training_loss = loss(EHMulx_Tullio(dataRef,model(pN_r),positionsRef),reconRef) + sum(sqnorm,pN_r)
+        training_loss = loss(EHMulx_Tullio(dataRef,model(pN_r),positionsRef),reconRef) + sum(sqnorm,diff(pN_r, dims=2))
         return training_loss
     end
 
