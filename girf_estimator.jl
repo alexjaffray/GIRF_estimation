@@ -13,7 +13,7 @@ using
     Zygote,
     TestImages,
     LinearAlgebra,
-    #KernelAbstractions,
+    KernelAbstractions,
     Tullio
 
 pygui(true)
@@ -112,20 +112,32 @@ function EHMulx(x, nodes::Matrix, positions::Matrix)
 
 end
 
-## Single Threaded Explicit Passing Version for Autodiff compat. 
+## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
-    @tullio E[k,n] := exp <| (-1im * Float64.(pi) * 2 * nodes[i,k]*positions[i,n])
+    @tullio E[k,n] := exp <| (-1.0im * pi * 2.0 * nodes[i,k]*positions[i,n])
     @tullio y[k] := E[k,n]*x[n]
 
     return y
 
 end
 
-## Single Threaded Explicit Passing Version for Autodiff compat. 
-function EHMulx_Tullio(x, nodes::Matrix, positions::Matrix)
+## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
+function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
-    @tullio EH[n,k] := exp <| (1im * Float64.(pi) * 2 * positions[i,n]*nodes[i,k])
+    @tullio EH[n,k] := exp <| (1.0im * pi * 2.0 * positions[i,n]*nodes[i,k])
+    @tullio y[n] := EH[n,k]*x[k]
+
+    return y
+
+end
+
+## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
+function EHMulx_Tullio(x, nodes::Array{Float64,4}, positions::Matrix{Float64})
+
+    nodes2 = undoReshape(nodes)
+
+    @tullio EH[n,k] := exp <| (1.0im * pi * 2.0 * positions[i,n]*nodes2[i,k])
     @tullio y[n] := EH[n,k]*x[k]
 
     return y
@@ -242,9 +254,9 @@ function undoReshape(x)
 
 end
 
-function loss(x, y, nodes, positions)
+function loss(x, y)
 
-    Flux.Losses.mae(EHMulx(x, undoReshape(model(nodes)),positions), y)
+    Flux.Losses.mse(angle.(x),angle.(y))
 
 end
 
@@ -253,12 +265,12 @@ ker = rand(6)
 ker = ker ./ sum(ker)
 
 ## Test Setting Up Simulation (forward sim)
-N = 127
-M = 128
+N = 226
+M = 186
 
 imShape = (N, M)
 
-I = Float64.(TestImages.testimage("mri_stack"))[31:158,31:158, 13]
+I = Float64.(TestImages.testimage("mri_stack"))
 #I = circularShutterFreq!(I, 1)
 
 ## Simulation parameters
@@ -267,7 +279,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = N * M
-parameters[:windings] = 64
+parameters[:windings] = 8
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -296,16 +308,19 @@ newNodesX = prepend!(vec(cumsum(filteredWaveformX)), [0.0])
 acqData.traj[1].nodes[1, :] = newNodesX
 acqData.traj[1].nodes[2, :] = newNodesY
 
+perturbedNodes = deepcopy(acqData.traj[1].nodes)
+
 ## Plot the new nodes
-scatter(acqData.traj[1].nodes[1, :], acqData.traj[1].nodes[2, :])
+scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
 ## Reconstruct with perturbed nodes
-@time recon2 = EHMulx_Tullio(acqData.kdata[1],acqData.traj[1].nodes,positions)
+@time recon2 = EHMulx_Tullio(acqData.kdata[1],perturbedNodes,positions)
 plotError(recon1, recon2, imShape)
 
 ## Define ML Model
-layer = Conv((1, 6), 2 => 2, pad = SamePad())
+layer = Conv((1, 3), 2 => 2, pad = SamePad())
 model = Chain(layer)
+
 
 # # Test The layer Idea
 # layer = Conv((1,30),1=>30,identity; bias=true, pad=SamePad())
@@ -314,15 +329,15 @@ model = Chain(layer)
 # These should All be Float32 types
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
-reconRef = deepcopy(recon1)
+reconRef = deepcopy(recon2)
 positionsRef = deepcopy(collect(positions))
+
+pN_r = reshapeNodes(nodesRef)
 
 # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
 # See example below: 
 
 # (x...) -> loss(x..., arg1, arg2...)
-
-# gs = gradient((nodesRef)-> 
 
 # ## Do Training of Model for one iteration
 # parameters = Flux.params(model)
@@ -331,3 +346,34 @@ positionsRef = deepcopy(collect(positions))
 # for i = 1:200
 #     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
 # end
+
+f = 0
+learningRate = 0.0001
+opt = ADAM()
+figure()
+
+sqnorm(x) = sum(abs2, x)
+
+numiters = 1000
+
+dat = Vector{Float64}(undef,numiters)
+
+for i = 1:numiters
+    
+    local training_loss
+    ps = Params(Flux.params(model))
+    gs = gradient(ps) do
+        training_loss = loss(EHMulx_Tullio(dataRef,model(pN_r),positionsRef),reconRef) + sum(sqnorm,pN_r)
+        return training_loss
+    end
+
+    dat[i] = training_loss
+
+    print(training_loss,"\n")
+
+    Flux.update!(opt,ps,gs)
+
+end
+
+figure()
+plot(dat)
