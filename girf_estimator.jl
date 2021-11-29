@@ -57,7 +57,7 @@ end
 
 function filterGradientWaveForms(G, theta)
 
-    imfilter(G, reflect(centered(theta)), Fill(0))
+    DSP.conv(G,theta)[1:length(G)]
 
 end
 
@@ -116,8 +116,8 @@ end
 ## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
-    @tullio E[k,n] := exp <| (-1.0im * pi * 2.0 * nodes[i,k]*positions[i,n])
-    @tullio y[k] := E[k,n]*x[n]
+    @tullio E[k,n] := exp <| (-1.0im * pi * 2.0 * nodes[i,k]*$positions[i,n])
+    @tullio y[k] := E[k,n]*$x[n]
 
     return y
 
@@ -126,8 +126,8 @@ end
 ## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
-    @tullio EH[n,k] := exp <| (1.0im * pi * 2.0 * positions[i,n]*nodes[i,k])
-    @tullio y[n] := EH[n,k]*x[k]
+    @tullio EH[n,k] := exp <| (1.0im * pi * 2.0 * $positions[i,n]*nodes[i,k])
+    @tullio y[n] := EH[n,k]*$x[k]
 
     return y
 
@@ -138,8 +138,8 @@ function EHMulx_Tullio(x, nodes::Array{Float64,4}, positions::Matrix{Float64})
 
     nodes2 = undoReshape(nodes)
 
-    @tullio EH[n,k] := exp <| (1.0im * pi * 2.0 * positions[i,n]*nodes2[i,k])
-    @tullio y[n] := EH[n,k]*x[k]
+    @tullio EH[n,k] := exp <| (1.0im * pi * 2.0 * $positions[i,n]*nodes2[i,k])
+    @tullio y[n] := EH[n,k]*$x[k]
 
     return y
 
@@ -257,12 +257,14 @@ end
 
 function loss(x, y)
 
-    Flux.Losses.mse(abs.(x),abs.(y))
+    Flux.Losses.mae(x,y)
 
 end
 
+
+
 ## Generate Ground Truth Filtering Kernel
-ker = rand(6)
+ker = rand(3)
 ker = ker ./ sum(ker)
 
 ## Test Setting Up Simulation (forward sim)
@@ -273,14 +275,14 @@ imShape = (N, M)
 
 B = Float64.(TestImages.testimage("mri_stack"))[:,:,13]
 
-img_small = ImageTransformations.restrict(B)
-img_medium = ImageTransformations.restrict(img_small)
+# img_small = ImageTransformations.restrict(B)
+# img_medium = ImageTransformations.restrict(img_small)
 
-I_mage = img_medium
+I_mage = B
 
 imShape = size(I_mage)
 
-#I = circularShutterFreq!(I, 1)
+I_mage = circularShutterFreq!(I_mage, 1)
 
 ## Simulation parameters
 parameters = Dict{Symbol,Any}()
@@ -288,7 +290,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1]*imShape[2]
-parameters[:windings] = 16
+parameters[:windings] = 128
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -298,7 +300,9 @@ positions = getPositions(imShape)
 ## Define Perfect Reconstruction
 
 @time recon1 = EHMulx_Tullio(acqData.kdata[1],acqData.traj[1].nodes,positions)
-nodesRef = Float64.(deepcopy(acqData.traj[1].nodes))
+normalizeRecon!(recon1)
+
+nodesRef = deepcopy(acqData.traj[1].nodes)
 
 ## Plot the actual nodes used for the perfect reconstruction
 figure()
@@ -324,6 +328,7 @@ scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
 ## Reconstruct with perturbed nodes
 @time recon2 = EHMulx_Tullio(acqData.kdata[1],perturbedNodes,positions)
+normalizeRecon!(recon2)
 plotError(recon1, recon2, imShape)
 
 ## Define ML Model
@@ -356,33 +361,30 @@ pN_r = reshapeNodes(nodesRef)
 #     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
 # end
 
-f = 0
-learningRate = 0.000001
-opt = Descent(learningRate)
-figure()
+# opt = ADAM()
 
-sqnorm(x) = sum(abs2, x)
+# sqnorm(x) = sum(abs2, x)
 
-numiters = 1000
+# numiters = 100
 
-dat = Vector{Float64}(undef,numiters)
+# dat = Vector{Float64}(undef,numiters)
 
-for i = 1:numiters
+# for i = 1:numiters
     
-    local training_loss
-    ps = Params(Flux.params(model))
-    gs = gradient(ps) do
-        training_loss = loss(EHMulx_Tullio(dataRef,model(pN_r),positionsRef),reconRef) + sum(sqnorm,diff(pN_r, dims=2))
-        return training_loss
-    end
+#     local training_loss
+#     ps = Params(Flux.params(model))
+#     gs = gradient(ps) do
+#         training_loss = loss(EHMulx_Tullio(dataRef,model(pN_r),positionsRef),reconRef)
+#         return training_loss
+#     end
 
-    dat[i] = training_loss
+#     dat[i] = training_loss
 
-    print(training_loss,"\n")
+#     print(training_loss,"\n")
 
-    Flux.update!(opt,ps,gs)
+#     Flux.update!(opt,ps,gs)
 
-end
+# end
 
-figure()
-plot(dat)
+# figure()
+# plot(dat)
