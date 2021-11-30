@@ -272,39 +272,6 @@ function getPositions(sh::Tuple)
 
 end
 
-# function doOp(x, data)
-
-#     op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
-#     op \ data
-
-# end
-
-# Zygote.@adjoint function doOp(x, data)
-
-#     op = ExplicitOp((N, N), x, Array{ComplexF64}(undef, 0, 0))
-
-#     opResult = op \ data
-
-#     function back(ΔopResult)
-#         B̄ = op' \ ΔopResult
-
-#         return (-B̄ * opResult', B̄)
-
-#     end
-
-#     return opResult, back
-
-# end
-
-# function getPrediction(x, data)
-
-#     nodesX = reshapeNodes(x.nodes[1, :])
-#     x.nodes[1, :] = vec(model(nodesX))
-
-#     doOp(x, data)
-
-# end
-
 function reshapeNodes(x)
 
     s = size(x)
@@ -326,7 +293,7 @@ function loss(x, y)
 end
 
 ## Generate Ground Truth Filtering Kernel
-ker = rand(2,3)
+ker = rand(2,10)
 ker = ker ./ sum(ker, dims=2)
 
 ## Test Setting Up Simulation (forward sim)
@@ -346,13 +313,13 @@ imShape = size(I_mage)
 
 I_mage = circularShutterFreq!(I_mage, 1)
 
-## Simulation parameters
+# Simulation parameters
 parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 64
+parameters[:windings] = 40
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -380,21 +347,12 @@ scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
 plotError(recon1, recon2, imShape)
 
-## Define ML Model
-n_chan = 2
-support = 10
-layer = Conv((1, support), n_chan => n_chan, pad = SamePad(); bias = Flux.Zeros())
-model = Chain(layer)
-
 ## Input Data
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon2)
 positionsRef = deepcopy(collect(positions))
 gradientsRef = nodes_to_gradients(nodesRef)
-
-## Reshape nodes so they work with dataloader for Flux
-g_r = reshapeNodes(gradientsRef)
 
 # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
 # See example below: 
@@ -409,15 +367,18 @@ g_r = reshapeNodes(gradientsRef)
 #     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
 # end
 
+## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
 opt = ADAM()
 
 sqnorm(x) = sum(abs2, x)
 
-numiters = 400
+## Number of iterations until convergence
+numiters = 1000
 
-kernel = ones(2,3)./3
+kernel = ones(2,support)./support
 
 dat = Vector{Float64}(undef,numiters)
+datK = Vector{Float64}(undef,numiters)
 
 for i = 1:numiters
 
@@ -429,12 +390,22 @@ for i = 1:numiters
     end
 
     dat[i] = training_loss
+    datK[i] = Flux.mse(ker,kernel)
 
-    print(training_loss,"\n")
+    print("TrainingLoss: ",dat[i],"\n")
+    print("Kernel Loss: ", datK[i],"\n")
 
     Flux.update!(opt,ps,gs)
 
 end
 
 figure()
-plot(dat)
+plot(dat./maximum(dat))
+plot(datK./maximum(datK))
+
+outputTrajectory = real(apply_td_girf(nodesRef,kernel))
+
+@time finalRecon = EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef)
+
+plotError(finalRecon,recon2, imShape)
+#plotError(finalRecon,recon1, imShape)
