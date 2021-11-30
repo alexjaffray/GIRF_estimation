@@ -27,7 +27,7 @@ BLAS.set_num_threads(32)
 function plotTrajectoryError(x, y)
 
     figure("Pointwise Trajectory Error")
-    plot(sqrt.(abs2.(y[1, :]) .+ abs2.(y[1, :]) - sqrt.(abs2.(x[1, :]) + abs2.(x[2, :]))))
+    plot(sqrt.(abs2.(y[1, :]) .+ abs2.(y[2, :])) - sqrt.(abs2.(x[1, :]) + abs2.(x[2, :])))
 
     xlabel("Sample Index")
     ylabel("Euclidean Distance between Nominal and Actual Positions")
@@ -52,24 +52,6 @@ function plotError(x, y, sh)
     title("Phase Error")
     imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "jet")
     colorbar()
-
-end
-
-function filterGradientWaveForms(G, theta)
-
-    r = DSP.conv(G, theta)[1:length(G)]
-
-    figure()
-    plot(r)
-    plot(G)
-
-    return r
-
-end
-
-function getFilteredTrajectory(nodes::Matrix, theta)
-
-
 
 end
 
@@ -307,9 +289,9 @@ imShape = (N, M)
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 13]
 
 img_small = ImageTransformations.restrict(B)
-img_medium = ImageTransformations.restrict(img_small)
+#img_medium = ImageTransformations.restrict(img_small)
 
-I_mage = img_medium
+I_mage = img_small
 
 imShape = size(I_mage)
 
@@ -321,7 +303,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 18
+parameters[:windings] = 40
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -375,7 +357,7 @@ opt = ADAM()
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 10
+numiters = 100
 
 kernel = ones(2,kernel_length)./kernel_length
 
@@ -387,7 +369,7 @@ for i = 1:numiters
     local training_loss
     ps = Params([kernel])
     gs = gradient(ps) do
-        training_loss = loss(EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef),reconRef) + sqnorm(kernel)
+        training_loss = loss(EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef),reconRef) #+ sqnorm(kernel)
         return training_loss
     end
 
@@ -402,8 +384,8 @@ for i = 1:numiters
 end
 
 figure()
-plot(dat./maximum(dat))
-plot(datK./maximum(datK))
+plot(dat./dat[1])
+plot(datK./datK[1])
 
 outputTrajectory = real(apply_td_girf(nodesRef,kernel))
 
