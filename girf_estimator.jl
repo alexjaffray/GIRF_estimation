@@ -23,7 +23,6 @@ pygui(true)
 BLAS.set_num_threads(32)
 
 ## Plot the Euclidean error between the two trajectories
-
 function plotTrajectoryError(x, y)
 
     figure("Pointwise Trajectory Error")
@@ -34,6 +33,36 @@ function plotTrajectoryError(x, y)
 
 end
 
+## Show reconstructed image magnitude and phase including normalization if specified
+function showReconstructedImage(x,sh,do_normalization)
+
+    fig = figure("Reconstruction", figsize = (10, 4))
+
+    x_max = maximum(abs.(x))
+
+    reshapedMag = reshape(abs.(x), sh[1], sh[2])
+    reshapedAngle = reshape(angle.(x), sh[1], sh[2])
+
+    ## Normalize step:
+    if do_normalization
+        reshapedMag = reshapedMag./x_max
+        x_max = 1.0
+    end
+
+    subplot(121)
+    title("Magnitude")
+    imshow(reshapedMag, vmin = 0, vmax = x_max, cmap = "gray")
+    colorbar()
+
+    subplot(122)
+    title("Phase")
+    imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "jet")
+    colorbar()
+
+
+end
+
+## Function for plotting the voxel-wise errors between two Complex-valued images x and y of a given shape sh
 function plotError(x, y, sh)
 
     fig = figure("Voxel-wise Reconstruction Errors", figsize = (10, 4))
@@ -274,10 +303,12 @@ function loss(x, y)
 
 end
 
-kernel_length = 10
+kernel_length = 21
 
 ## Generate Ground Truth Filtering Kernel
 ker = rand(2,kernel_length)
+ker[1,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (50))
+ker[2,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (25))
 ker = ker ./ sum(ker, dims=2)
 
 ## Test Setting Up Simulation (forward sim)
@@ -289,9 +320,9 @@ imShape = (N, M)
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 13]
 
 img_small = ImageTransformations.restrict(B)
-#img_medium = ImageTransformations.restrict(img_small)
+img_medium = ImageTransformations.restrict(img_small)
 
-I_mage = img_small
+I_mage = img_medium
 
 imShape = size(I_mage)
 
@@ -303,7 +334,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 40
+parameters[:windings] = 30
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -357,7 +388,7 @@ opt = ADAM()
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 100
+numiters = 1000
 
 kernel = ones(2,kernel_length)./kernel_length
 
@@ -392,4 +423,7 @@ outputTrajectory = real(apply_td_girf(nodesRef,kernel))
 @time finalRecon = EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef)
 
 plotError(finalRecon,recon2, imShape)
+
+showReconstructedImage(finalRecon,imShape,true)
+
 #plotError(finalRecon,recon1, imShape)
