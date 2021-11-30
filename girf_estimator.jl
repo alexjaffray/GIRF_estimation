@@ -1,4 +1,4 @@
-using 
+using
     MRIReco,
     DSP,
     NIfTI,
@@ -57,7 +57,19 @@ end
 
 function filterGradientWaveForms(G, theta)
 
-    DSP.conv(G,theta)[1:length(G)]
+    r = DSP.conv(G, theta)[1:length(G)]
+
+    figure()
+    plot(r)
+    plot(G)
+
+    return r
+
+end
+
+function getFilteredTrajectory(nodes::Matrix, theta)
+
+
 
 end
 
@@ -98,8 +110,8 @@ end
 ## Single Threaded Explicit Passing Version for Autodiff compat. 
 function EMulx(x, nodes::Matrix, positions::Matrix)
 
-    E = constructE(nodes,positions)
-    y = E*x
+    E = constructE(nodes, positions)
+    y = E * x
     return y
 
 end
@@ -107,8 +119,8 @@ end
 ## Single Threaded Explicit Passing Version for Autodiff compat.
 function EHMulx(x, nodes::Matrix, positions::Matrix)
 
-    EH = constructEH(nodes,positions)
-    y = EH*x
+    EH = constructEH(nodes, positions)
+    y = EH * x
     return y
 
 end
@@ -116,8 +128,8 @@ end
 ## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
-    @tullio E[k,n] := exp <| (-1.0im * pi * 2.0 * nodes[i,k]*$positions[i,n])
-    @tullio y[k] := E[k,n]*$x[n]
+    @tullio E[k, n] := exp <| (-1.0im * pi * 2.0 * nodes[i, k] * $positions[i, n])
+    @tullio y[k] := E[k, n] * $x[n]
 
     return y
 
@@ -126,8 +138,8 @@ end
 ## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
-    @tullio EH[n,k] := exp <| (1.0im * pi * 2.0 * $positions[i,n]*nodes[i,k])
-    @tullio y[n] := EH[n,k]*$x[k]
+    @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
+    @tullio y[n] := EH[n, k] * $x[k]
 
     return y
 
@@ -138,10 +150,62 @@ function EHMulx_Tullio(x, nodes::Array{Float64,4}, positions::Matrix{Float64})
 
     nodes2 = undoReshape(nodes)
 
-    @tullio EH[n,k] := exp <| (1.0im * pi * 2.0 * $positions[i,n]*nodes2[i,k])
-    @tullio y[n] := EH[n,k]*$x[k]
+    @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes2[i, k])
+    @tullio y[n] := EH[n, k] * $x[k]
 
     return y
+
+end
+
+## Get gradients from the trajectory
+function nodes_to_gradients(nodes::Matrix)
+
+    gradients = diff([[0; 0] nodes], dims = 2)
+    return gradients
+
+end
+
+## Pad gradients to prepare for Tullio
+function pad_gradients(gradients::Matrix, kernelSize)
+
+    padding = zeros(kernelSize[1], kernelSize[2] - 1)
+    padded = [padding gradients]
+    return padded
+
+end
+
+## Filter gradients using Tullio for efficient convolution
+function filter_gradients(gradients::Matrix, kernel::Matrix)
+
+    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a]
+    return d
+
+end
+
+## Convert gradients to trajectory nodes
+function gradients_to_nodes(gradients::Matrix)
+
+    nodes = cumsum(gradients, dims = 2)
+    return nodes
+
+end
+
+## Efficient function to apply a time domain gradient impulse response function kernel to the trajectory (2D only now)
+function apply_td_girf(nodes::Matrix, kernel::Matrix)
+
+    gradients = nodes_to_gradients(nodes)
+    padded = pad_gradients(gradients, size(kernel))
+    filtered = filter_gradients(padded, kernel)
+    filtered_nodes = gradients_to_nodes(filtered)
+    return filtered_nodes
+
+end
+
+function get_padded_gradients(nodes::Matrix, kernelSize::Tuple)
+
+    g = nodes_to_gradients(nodes)
+    padded = pad_gradients(g,kernelSize)
+    return padded
 
 end
 
@@ -149,7 +213,7 @@ end
 function constructE(nodes::Matrix, positions::Matrix)
 
     phi = nodes' * positions'
-    
+
     # Multithreaded
     # Threads.@threads for i in eachindex(phi)
     #     E[i] = cispi(-2 * phi[i])
@@ -196,15 +260,15 @@ end
 
 function getPositions(sh::Tuple)
 
-     # set up positions according to strong voxel condition
-     x = collect(1:sh[1]) .- sh[1] / 2 .- 1
-     y = collect(1:sh[2]) .- sh[2] / 2 .- 1
- 
-     p = Iterators.product(x, y)
- 
-     positions = collect(Float64.(vecvec_to_matrix(vec(collect.(p))))')
+    # set up positions according to strong voxel condition
+    x = collect(1:sh[1]) .- sh[1] / 2 .- 1
+    y = collect(1:sh[2]) .- sh[2] / 2 .- 1
 
-     return positions
+    p = Iterators.product(x, y)
+
+    positions = collect(Float64.(vecvec_to_matrix(vec(collect.(p))))')
+
+    return positions
 
 end
 
@@ -244,28 +308,26 @@ end
 function reshapeNodes(x)
 
     s = size(x)
-    reshape(x,1, s[2], s[1], 1)
+    reshape(x, 1, s[2], s[1], 1)
 
 end
 
 function undoReshape(x)
 
     r = size(x)
-    reshape(x,r[3],r[2])
+    reshape(x, r[3], r[2])
 
 end
 
 function loss(x, y)
 
-    Flux.Losses.mae(x,y)
+    Flux.Losses.mse(real(x), real(y)) + Flux.Losses.mse(imag(x), imag(y))
 
 end
 
-
-
 ## Generate Ground Truth Filtering Kernel
-ker = rand(3)
-ker = ker ./ sum(ker)
+ker = rand(2,3)
+ker = ker ./ sum(ker, dims=2)
 
 ## Test Setting Up Simulation (forward sim)
 N = 226
@@ -273,12 +335,12 @@ M = 186
 
 imShape = (N, M)
 
-B = Float64.(TestImages.testimage("mri_stack"))[:,:,13]
+B = Float64.(TestImages.testimage("mri_stack"))[:, :, 13]
 
-# img_small = ImageTransformations.restrict(B)
-# img_medium = ImageTransformations.restrict(img_small)
+img_small = ImageTransformations.restrict(B)
+img_medium = ImageTransformations.restrict(img_small)
 
-I_mage = B
+I_mage = img_medium
 
 imShape = size(I_mage)
 
@@ -289,8 +351,8 @@ parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = imShape[1]*imShape[2]
-parameters[:windings] = 128
+parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
+parameters[:windings] = 64
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -298,62 +360,48 @@ acqData = simulation(I_mage, parameters)
 positions = getPositions(imShape)
 
 ## Define Perfect Reconstruction
-
-@time recon1 = EHMulx_Tullio(acqData.kdata[1],acqData.traj[1].nodes,positions)
-normalizeRecon!(recon1)
+@time recon1 = EHMulx_Tullio(acqData.kdata[1], acqData.traj[1].nodes, positions)
+#normalizeRecon!(recon1)
 
 nodesRef = deepcopy(acqData.traj[1].nodes)
 
 ## Plot the actual nodes used for the perfect reconstruction
 figure()
-scatter(acqData.traj[1].nodes[1, :], acqData.traj[1].nodes[2, :])
+scatter(nodesRef[1, :], nodesRef[2, :])
 
-oldNodesX = acqData.traj[1].nodes[1, :]
-oldNodesY = acqData.traj[1].nodes[2, :]
-
-## Filter the nodes with some kernel and write them back into acqData
-filteredWaveformX = filterGradientWaveForms(diff(acqData.traj[1].nodes[1, :]), ker)
-filteredWaveformY = filterGradientWaveForms(diff(acqData.traj[1].nodes[2, :]), ker)
-
-newNodesY = prepend!(vec(cumsum(filteredWaveformY)), [0.0])
-newNodesX = prepend!(vec(cumsum(filteredWaveformX)), [0.0])
-
-acqData.traj[1].nodes[1, :] = newNodesX
-acqData.traj[1].nodes[2, :] = newNodesY
-
-perturbedNodes = deepcopy(acqData.traj[1].nodes)
+perturbedNodes = apply_td_girf(nodesRef, ker)
 
 ## Plot the new nodes
 scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
 ## Reconstruct with perturbed nodes
-@time recon2 = EHMulx_Tullio(acqData.kdata[1],perturbedNodes,positions)
-normalizeRecon!(recon2)
+@time recon2 = EHMulx_Tullio(acqData.kdata[1], perturbedNodes, positions)
+#normalizeRecon!(recon2)
+
 plotError(recon1, recon2, imShape)
 
 ## Define ML Model
-layer = Conv((1, 10), 2 => 2, pad = SamePad())
+n_chan = 2
+support = 10
+layer = Conv((1, support), n_chan => n_chan, pad = SamePad(); bias = Flux.Zeros())
 model = Chain(layer)
 
-
-# # Test The layer Idea
-# layer = Conv((1,30),1=>30,identity; bias=true, pad=SamePad())
-# testDat = reshape(oldNodesX,1,256*256,1,1)
-
-# These should All be Float32 types
+## Input Data
 trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon2)
 positionsRef = deepcopy(collect(positions))
+gradientsRef = nodes_to_gradients(nodesRef)
 
-pN_r = reshapeNodes(nodesRef)
+## Reshape nodes so they work with dataloader for Flux
+g_r = reshapeNodes(gradientsRef)
 
 # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
 # See example below: 
 
 # (x...) -> loss(x..., arg1, arg2...)
 
-# ## Do Training of Model for one iteration
+## Do Training of Model for one iteration
 # parameters = Flux.params(model)
 # opt = ADAGrad()
 
@@ -361,30 +409,32 @@ pN_r = reshapeNodes(nodesRef)
 #     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
 # end
 
-# opt = ADAM()
+opt = ADAM()
 
-# sqnorm(x) = sum(abs2, x)
+sqnorm(x) = sum(abs2, x)
 
-# numiters = 100
+numiters = 400
 
-# dat = Vector{Float64}(undef,numiters)
+kernel = ones(2,3)./3
 
-# for i = 1:numiters
-    
-#     local training_loss
-#     ps = Params(Flux.params(model))
-#     gs = gradient(ps) do
-#         training_loss = loss(EHMulx_Tullio(dataRef,model(pN_r),positionsRef),reconRef)
-#         return training_loss
-#     end
+dat = Vector{Float64}(undef,numiters)
 
-#     dat[i] = training_loss
+for i = 1:numiters
 
-#     print(training_loss,"\n")
+    local training_loss
+    ps = Params([kernel])
+    gs = gradient(ps) do
+        training_loss = loss(EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef),reconRef) + sqnorm(kernel)
+        return training_loss
+    end
 
-#     Flux.update!(opt,ps,gs)
+    dat[i] = training_loss
 
-# end
+    print(training_loss,"\n")
 
-# figure()
-# plot(dat)
+    Flux.update!(opt,ps,gs)
+
+end
+
+figure()
+plot(dat)
