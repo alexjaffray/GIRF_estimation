@@ -292,8 +292,10 @@ function loss(x, y)
 
 end
 
+kernel_length = 10
+
 ## Generate Ground Truth Filtering Kernel
-ker = rand(2,10)
+ker = rand(2,kernel_length)
 ker = ker ./ sum(ker, dims=2)
 
 ## Test Setting Up Simulation (forward sim)
@@ -319,7 +321,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 40
+parameters[:windings] = 18
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -373,9 +375,9 @@ opt = ADAM()
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 1000
+numiters = 10
 
-kernel = ones(2,support)./support
+kernel = ones(2,kernel_length)./kernel_length
 
 dat = Vector{Float64}(undef,numiters)
 datK = Vector{Float64}(undef,numiters)
