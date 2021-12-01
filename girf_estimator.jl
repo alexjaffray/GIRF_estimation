@@ -158,6 +158,18 @@ function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
 end
 
+## Weighted Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
+function weighted_EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
+
+    # TODO: ADD DENSITY COMPENSATION FUNCTION AS DESCRIBED IN NOLL, FESSLER and SUTTON
+
+    @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
+    @tullio y[n] := EH[n, k] * $x[k]
+
+    return y
+
+end
+
 ## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function EHMulx_Tullio(x, nodes::Array{Float64,4}, positions::Matrix{Float64})
 
@@ -334,7 +346,7 @@ function getGaussianKernel(kernel_length)
 end
 
 ## Define Kernel Length
-kernel_length = 21
+kernel_length = 7
 
 ## Get ground truth kernel
 ker = getGaussianKernel(kernel_length)
@@ -357,7 +369,7 @@ I_mage = circularShutterFreq!(I_mage, 1)
 
 # Simulation parameters
 parameters = Dict{Symbol,Any}()
-parameters[:simulation] = "fast"
+parameters[:simulation] = "explicit"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
