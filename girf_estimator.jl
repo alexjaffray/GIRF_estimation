@@ -17,6 +17,8 @@ using
     KernelAbstractions,
     Tullio
 
+    
+#use pyplot backend with interactivity turned on
 pygui(true)
 
 ## Have to set this to the real number of threads because MRIReco.jl seems to set this to 1 when it's loaded :(
@@ -56,7 +58,7 @@ function showReconstructedImage(x,sh,do_normalization)
 
     subplot(122)
     title("Phase")
-    imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "jet")
+    imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "gray")
     colorbar()
 
 
@@ -79,7 +81,7 @@ function plotError(x, y, sh)
 
     subplot(122)
     title("Phase Error")
-    imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "jet")
+    imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "gray")
     colorbar()
 
 end
@@ -212,6 +214,7 @@ function apply_td_girf(nodes::Matrix, kernel::Matrix)
 
 end
 
+## Get the padded gradient waveform
 function get_padded_gradients(nodes::Matrix, kernelSize::Tuple)
 
     g = nodes_to_gradients(nodes)
@@ -252,6 +255,7 @@ function constructEH(nodes::Matrix, positions::Matrix)
 
 end
 
+## Convert Vector of Vectors to Matrix
 function vecvec_to_matrix(vecvec)
 
     dim1 = length(vecvec)
@@ -269,6 +273,7 @@ function vecvec_to_matrix(vecvec)
 
 end
 
+## Get the positions corresponding to the strong voxel condition for a given image Shape
 function getPositions(sh::Tuple)
 
     # set up positions according to strong voxel condition
@@ -283,6 +288,7 @@ function getPositions(sh::Tuple)
 
 end
 
+## Helper function for reshaping nodes to size expected by Flux dataloader
 function reshapeNodes(x)
 
     s = size(x)
@@ -290,6 +296,7 @@ function reshapeNodes(x)
 
 end
 
+## Helper function for undoing the reshaping of nodes to size expected by Flux dataloader
 function undoReshape(x)
 
     r = size(x)
@@ -297,27 +304,47 @@ function undoReshape(x)
 
 end
 
+## Loss function for the minimization -> works over the real and imaginary parts of the image separately
 function loss(x, y)
 
-    Flux.Losses.mse(real(x), real(y)) + Flux.Losses.mse(imag(x), imag(y))
+    #Flux.Losses.mse(real(x), real(y)) + Flux.Losses.mse(imag(x), imag(y))
+    Flux.Losses.mae(x,y)
 
 end
 
+## Custom simulation function 
+function groundtruth_sim(nodes::Matrix, image, kernel, positions)
+
+    outputData = EMulx_Tullio(vec(image),apply_td_girf(nodes, kernel),positions)
+    return outputData
+
+
+end
+
+## Generates ground truth gaussian kernel
+# TODO: Add support for variable width
+function getGaussianKernel(kernel_length)
+
+    ## Generate Ground Truth Filtering Kernel
+    ker = rand(2,kernel_length)
+    ker[1,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (50))
+    ker[2,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (25))
+    ker = ker ./ sum(ker, dims=2)    
+
+end
+
+## Define Kernel Length
 kernel_length = 21
 
-## Generate Ground Truth Filtering Kernel
-ker = rand(2,kernel_length)
-ker[1,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (50))
-ker[2,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (25))
-ker = ker ./ sum(ker, dims=2)
+## Get ground truth kernel
+ker = getGaussianKernel(kernel_length)
 
 ## Test Setting Up Simulation (forward sim)
 N = 226
 M = 186
-
 imShape = (N, M)
 
-B = Float64.(TestImages.testimage("mri_stack"))[:, :, 13]
+B = Float64.(TestImages.testimage("mri_stack"))[:, :, 17]
 
 img_small = ImageTransformations.restrict(B)
 img_medium = ImageTransformations.restrict(img_small)
@@ -334,7 +361,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 30
+parameters[:windings] = N÷12
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -383,12 +410,12 @@ gradientsRef = nodes_to_gradients(nodesRef)
 # end
 
 ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
-opt = ADAM()
+opt = ADAM() # Add 0.00001 as learning rate for better performance.
 
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 1000
+numiters = 100
 
 kernel = ones(2,kernel_length)./kernel_length
 
@@ -405,7 +432,7 @@ for i = 1:numiters
     end
 
     dat[i] = training_loss
-    datK[i] = Flux.mse(ker,kernel)
+    datK[i] = Flux.Losses.mse(ker,kernel)
 
     print("TrainingLoss: ",dat[i],"\n")
     print("Kernel Loss: ", datK[i],"\n")
