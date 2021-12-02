@@ -58,7 +58,7 @@ function showReconstructedImage(x,sh,do_normalization)
 
     subplot(122)
     title("Phase")
-    imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "gray")
+    imshow(reshapedAngle, vmin = -pi, vmax = pi, cmap = "seismic")
     colorbar()
 
 
@@ -81,7 +81,7 @@ function plotError(x, y, sh)
 
     subplot(122)
     title("Phase Error")
-    imshow(reshapedAngle, vmin = 0.0, vmax = pi, cmap = "gray")
+    imshow(reshapedAngle, vmin = -pi, vmax = pi, cmap = "Spectral")
     colorbar()
 
 end
@@ -365,7 +365,7 @@ function getGaussianKernel(kernel_length)
 end
 
 ## Define Kernel Length
-kernel_length = 7
+kernel_length = 5
 
 ## Get ground truth kernel
 ker = getGaussianKernel(kernel_length)
@@ -388,22 +388,27 @@ I_mage = circularShutterFreq!(I_mage, 1)
 
 # Simulation parameters
 parameters = Dict{Symbol,Any}()
-parameters[:simulation] = "explicit"
+parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
 parameters[:windings] = 32
 parameters[:AQ] = 3.0e-2
 
-## Do simulation
+## Do simulation to get the trajectory to perturb!
 acqData = simulation(I_mage, parameters)
 positions = getPositions(imShape)
+nodesRef = deepcopy(acqData.traj[1].nodes)
+signalRef = deepcopy(acqData.kdata[1])
+
+## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
+@time referenceSim = weighted_EMulx_Tullio(I_mage, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
 
 ## Define Perfect Reconstruction
-@time recon1 = weighted_EHMulx_Tullio(acqData.kdata[1], acqData.traj[1].nodes, positions, get_weights(nodes_to_gradients(acqData.traj[1].nodes)))
+@time recon1 = weighted_EHMulx_Tullio(referenceSim, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
 #normalizeRecon!(recon1)
+showReconstructedImage(recon1, imShape,true)
 
-nodesRef = deepcopy(acqData.traj[1].nodes)
 
 ## Plot the actual nodes used for the perfect reconstruction
 figure()
@@ -411,21 +416,26 @@ scatter(nodesRef[1, :], nodesRef[2, :])
 
 perturbedNodes = apply_td_girf(nodesRef, ker)
 
+@time perturbedSim = weighted_EMulx_Tullio(I_mage, perturbedNodes, positions, get_weights(nodes_to_gradients(perturbedNodes)))
+
 ## Plot the new nodes
 scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
 ## Reconstruct with perturbed nodes
-@time recon2 = weighted_EHMulx_Tullio(acqData.kdata[1], perturbedNodes, positions,get_weights(nodes_to_gradients(perturbedNodes)))
+@time recon2 = weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions,get_weights(nodes_to_gradients(perturbedNodes)))
+showReconstructedImage(recon2, imShape,true)
 #normalizeRecon!(recon2)
 
 plotError(recon1, recon2, imShape)
 
 ## Input Data
-trajRef = deepcopy(acqData.traj[1])
-dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon2)
 positionsRef = deepcopy(collect(positions))
 weights = get_weights(nodes_to_gradients(nodesRef))
+
+initialReconstruction = weighted_EHMulx_Tullio(perturbedSim,nodesRef,positionsRef, weights)
+showReconstructedImage(initialReconstruction,imShape,true)
+plotError(initialReconstruction, recon2, imShape)
 
 # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
 # See example below: 
@@ -448,39 +458,41 @@ sqnorm(x) = sum(abs2, x)
 ## Number of iterations until convergence
 numiters = 1000
 
-kernel = ones(2,kernel_length)./kernel_length
+testKernLength = kernel_length
+
+kernel = ones(2,testKernLength)./testKernLength
 
 dat = Vector{Float64}(undef,numiters)
 datK = Vector{Float64}(undef,numiters)
 
-for i = 1:numiters
+for i = 1:100
 
     global weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
     local training_loss
 
     ps = Params([kernel])
     gs = gradient(ps) do
-        training_loss = loss(weighted_EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) #+ sqnorm(kernel)
+        training_loss = loss(weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) #+ sqnorm(kernel)
         return training_loss
     end
 
     dat[i] = training_loss
     datK[i] = Flux.Losses.mse(ker,kernel)
 
-    print("TrainingLoss: ",dat[i],"\n")
-    print("Kernel Loss: ", datK[i],"\n")
+    print("[ITERATION $i] Train  Loss: ",dat[i],"\n")
+    print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
 
     Flux.update!(opt,ps,gs)
 
 end
 
 figure()
-plot(dat./dat[1])
-plot(datK./datK[1])
+plot(dat)
+plot(datK)
 
 outputTrajectory = real(apply_td_girf(nodesRef,kernel))
 
-@time finalRecon = weighted_EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
+@time finalRecon = weighted_EHMulx_Tullio(perturbedSim,outputTrajectory,positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
 
 plotError(finalRecon,recon2, imShape)
 
