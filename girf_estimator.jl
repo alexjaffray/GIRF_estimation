@@ -456,7 +456,7 @@ opt = ADAM() # Add 0.00001 as learning rate for better performance.
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 1000
+numiters = 100
 
 testKernLength = kernel_length
 
@@ -465,7 +465,7 @@ kernel = ones(2,testKernLength)./testKernLength
 dat = Vector{Float64}(undef,numiters)
 datK = Vector{Float64}(undef,numiters)
 
-for i = 1:100
+for i = 1:numiters
 
     global weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
     local training_loss
