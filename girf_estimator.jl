@@ -64,6 +64,75 @@ function showReconstructedImage(x,sh,do_normalization)
 
 end
 
+## Show reconstructed image magnitude and phase including normalization if specified
+function compareReconstructedImages(x,y,sh,do_normalization)
+
+    fig = figure("Reconstruction Comparison", figsize = (10, 8))
+
+    x_max = maximum(abs.(x))
+    y_max = maximum(abs.(y))
+
+    reshapedMag_x = reshape(abs.(x), sh[1], sh[2])
+    reshapedAngle_x = reshape(angle.(x), sh[1], sh[2])
+
+    reshapedMag_y = reshape(abs.(y), sh[1], sh[2])
+    reshapedAngle_y = reshape(angle.(y), sh[1], sh[2])
+
+
+    ## Normalize step:
+    if do_normalization
+        reshapedMag_x = reshapedMag_x./x_max
+        x_max = 1.0
+        reshapedMag_y = reshapedMag_y./y_max
+        y_max = 1.0
+    end
+
+    subplot(221)
+    title("Magnitude (Initial)")
+    imshow(reshapedMag_x, vmin = 0, vmax = x_max, cmap = "gray")
+    colorbar()
+
+    subplot(222)
+    title("Phase (Initial)")
+    imshow(reshapedAngle_x, vmin = -pi, vmax = pi, cmap = "seismic")
+    colorbar()
+
+    subplot(223)
+    title("Magnitude (Final)")
+    imshow(reshapedMag_y, vmin = 0, vmax = y_max, cmap = "gray")
+    colorbar()
+
+    subplot(224)
+    title("Phase (Final)")
+    imshow(reshapedAngle_y, vmin = -pi, vmax = pi, cmap = "seismic")
+    colorbar()
+
+
+end
+
+## Plot the Euclidean error between the two trajectories
+function plotTrajectories(t_nom,t_perturbed,t_solved)
+
+    figure("Trajectory Comparison", figsize = (12,12))
+    
+    gt_error = sqrt.(abs2.(t_nom[1, :]) .+ abs2.(t_nom[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :]))
+    solved_error = sqrt.(abs2.(t_solved[1, :]) .+ abs2.(t_solved[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :]))
+
+    subplot(211)
+    plot(t_nom',label="Nominal Trajectory")
+    plot(t_perturbed',label = "GT Trajectory")
+    plot(t_solved', label = "Solved Trajectory")
+    legend(loc="upper left")
+
+    subplot(212)
+    plot(gt_error, label="Nominal w.r.t GT")
+    plot(solved_error, label="Solved w.r.t GT")
+    xlabel("Sample Index")
+    ylabel("Euclidean Distance between Nominal and Actual Positions")
+    legend(loc="upper left")
+
+end
+
 ## Function for plotting the voxel-wise errors between two Complex-valued images x and y of a given shape sh
 function plotError(x, y, sh)
 
@@ -180,7 +249,7 @@ end
 ## Weighted Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function weighted_EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64}, weights::Vector{Float64})
 
-    # TODO: ADD DENSITY COMPENSATION FUNCTION AS DESCRIBED IN NOLL, FESSLER and SUTTON
+    #DENSITY COMPENSATION FUNCTION AS DESCRIBED IN NOLL, FESSLER and SUTTON
     #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
     @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
     @tullio y[n] := EH[n, k] * (weights[k]*$x[k])
@@ -204,7 +273,7 @@ end
 ## Get gradients from the trajectory
 function nodes_to_gradients(nodes::Matrix)
 
-    gradients = diff([[0; 0] nodes], dims = 2)
+    gradients = diff(hcat([0;0],nodes), dims = 2)
     return gradients
 
 end
@@ -213,7 +282,7 @@ end
 function pad_gradients(gradients::Matrix, kernelSize)
 
     padding = zeros(kernelSize[1], kernelSize[2] - 1)
-    padded = [padding gradients]
+    padded = hcat(padding,gradients)
     return padded
 
 end
@@ -371,16 +440,16 @@ kernel_length = 5
 ker = getGaussianKernel(kernel_length)
 
 ## Test Setting Up Simulation (forward sim)
-N = 226
-M = 186
+N = 113
+M = 93
 imShape = (N, M)
 
-B = Float64.(TestImages.testimage("mri_stack"))[:, :, 17]
+B = Float64.(TestImages.testimage("mri_stack"))[:, :, 14]
 
-img_small = ImageTransformations.restrict(B)
-img_medium = ImageTransformations.restrict(img_small)
+img_small = ImageTransformations.imresize(B, imShape)
+#img_medium = ImageTransformations.restrict(img_small)
 
-I_mage = img_medium
+I_mage = img_small
 
 imShape = size(I_mage)
 
@@ -392,7 +461,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 32
+parameters[:windings] = 64
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation to get the trajectory to perturb!
@@ -436,7 +505,6 @@ weights = get_weights(nodes_to_gradients(nodesRef))
 initialReconstruction = weighted_EHMulx_Tullio(perturbedSim,nodesRef,positionsRef, weights)
 showReconstructedImage(initialReconstruction,imShape,true)
 plotError(initialReconstruction, recon2, imShape)
-
 # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
 # See example below: 
 
@@ -477,7 +545,7 @@ for i = 1:numiters
     end
 
     dat[i] = training_loss
-    datK[i] = Flux.Losses.mse(ker,kernel)
+    datK[i] = Flux.Losses.mae(ker,kernel)
 
     print("[ITERATION $i] Train  Loss: ",dat[i],"\n")
     print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
@@ -498,4 +566,5 @@ plotError(finalRecon,recon2, imShape)
 
 showReconstructedImage(finalRecon,imShape,true)
 
-#plotError(finalRecon,recon1, imShape)
+compareReconstructedImages(initialReconstruction,finalRecon,imShape,true)
+plotTrajectories(nodesRef, perturbedNodes,outputTrajectory)
