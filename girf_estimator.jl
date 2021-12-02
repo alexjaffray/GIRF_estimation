@@ -427,21 +427,21 @@ function getGaussianKernel(kernel_length)
 
     ## Generate Ground Truth Filtering Kernel
     ker = rand(2,kernel_length)
-    ker[1,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (50))
-    ker[2,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (25))
+    ker[1,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (5))
+    ker[2,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (20))
     ker = ker ./ sum(ker, dims=2)    
 
 end
 
 ## Define Kernel Length
-kernel_length = 5
+kernel_length = 3
 
 ## Get ground truth kernel
 ker = getGaussianKernel(kernel_length)
 
 ## Test Setting Up Simulation (forward sim)
-N = 113
-M = 93
+N = 226
+M = 186
 imShape = (N, M)
 
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 14]
@@ -461,7 +461,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 64
+parameters[:windings] = 120
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation to get the trajectory to perturb!
@@ -524,7 +524,7 @@ opt = ADAM() # Add 0.00001 as learning rate for better performance.
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 100
+numiters = 300
 
 testKernLength = kernel_length
 
