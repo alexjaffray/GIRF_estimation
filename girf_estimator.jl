@@ -149,6 +149,17 @@ function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 end
 
 ## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
+function weighted_EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64}, weights::Vector{Float64})
+
+    #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
+    @tullio E[k, n] := exp <| (-1.0im * pi * 2.0 * nodes[i, k] * $positions[i, n])
+    @tullio y[k] := weights[k] * E[k, n] * $x[n]
+
+    return y
+
+end
+
+## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
     @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
@@ -158,13 +169,21 @@ function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
 end
 
+function get_weights(gradients::Matrix)
+
+    @tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
+    W = W./max(W...)
+    return W
+
+end
+
 ## Weighted Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
-function weighted_EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
+function weighted_EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64}, weights::Vector{Float64})
 
     # TODO: ADD DENSITY COMPENSATION FUNCTION AS DESCRIBED IN NOLL, FESSLER and SUTTON
-
+    #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
     @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
-    @tullio y[n] := EH[n, k] * $x[k]
+    @tullio y[n] := EH[n, k] * (weights[k]*$x[k])
 
     return y
 
@@ -373,7 +392,7 @@ parameters[:simulation] = "explicit"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = N÷12
+parameters[:windings] = 32
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation
@@ -381,7 +400,7 @@ acqData = simulation(I_mage, parameters)
 positions = getPositions(imShape)
 
 ## Define Perfect Reconstruction
-@time recon1 = EHMulx_Tullio(acqData.kdata[1], acqData.traj[1].nodes, positions)
+@time recon1 = weighted_EHMulx_Tullio(acqData.kdata[1], acqData.traj[1].nodes, positions, get_weights(nodes_to_gradients(acqData.traj[1].nodes)))
 #normalizeRecon!(recon1)
 
 nodesRef = deepcopy(acqData.traj[1].nodes)
@@ -396,7 +415,7 @@ perturbedNodes = apply_td_girf(nodesRef, ker)
 scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
 ## Reconstruct with perturbed nodes
-@time recon2 = EHMulx_Tullio(acqData.kdata[1], perturbedNodes, positions)
+@time recon2 = weighted_EHMulx_Tullio(acqData.kdata[1], perturbedNodes, positions,get_weights(nodes_to_gradients(perturbedNodes)))
 #normalizeRecon!(recon2)
 
 plotError(recon1, recon2, imShape)
@@ -406,7 +425,7 @@ trajRef = deepcopy(acqData.traj[1])
 dataRef = deepcopy(vec(acqData.kdata[1]))
 reconRef = deepcopy(recon2)
 positionsRef = deepcopy(collect(positions))
-gradientsRef = nodes_to_gradients(nodesRef)
+weights = get_weights(nodes_to_gradients(nodesRef))
 
 # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
 # See example below: 
@@ -427,7 +446,7 @@ opt = ADAM() # Add 0.00001 as learning rate for better performance.
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 100
+numiters = 1000
 
 kernel = ones(2,kernel_length)./kernel_length
 
@@ -436,10 +455,12 @@ datK = Vector{Float64}(undef,numiters)
 
 for i = 1:numiters
 
+    global weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
     local training_loss
+
     ps = Params([kernel])
     gs = gradient(ps) do
-        training_loss = loss(EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef),reconRef) #+ sqnorm(kernel)
+        training_loss = loss(weighted_EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) #+ sqnorm(kernel)
         return training_loss
     end
 
@@ -459,7 +480,7 @@ plot(datK./datK[1])
 
 outputTrajectory = real(apply_td_girf(nodesRef,kernel))
 
-@time finalRecon = EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef)
+@time finalRecon = weighted_EHMulx_Tullio(dataRef,real(apply_td_girf(nodesRef,kernel)),positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
 
 plotError(finalRecon,recon2, imShape)
 
