@@ -15,6 +15,7 @@ using
     TestImages,
     LinearAlgebra,
     KernelAbstractions,
+    CUDAKernels,
     Tullio
 
     
@@ -169,10 +170,10 @@ function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
 end
 
-function get_weights(gradients::Matrix)
+function get_weights(gradients)
 
     @tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
-    W = W./max(W...)
+    CUDA.@allowscalar W = W./max(W...)
     return W
 
 end
@@ -214,9 +215,9 @@ function EHMulx_Tullio(x, nodes::Array{Float64,4}, positions::Matrix{Float64})
 end
 
 ## Get gradients from the trajectory
-function nodes_to_gradients(nodes::Array)
+function nodes_to_gradients(nodes)
 
-    newNodes = hcat([0;0],nodes)
+    newNodes = hcat(CuArray([0;0]),nodes)
     gradients = diff(newNodes, dims = 2)
     return gradients
 
@@ -232,9 +233,9 @@ function pad_gradients(gradients::Matrix, kernelSize)
 end
 
 ## Pad gradients to prepare for Tullio
-function pad_gradients(gradients::Array, kernelSize)
+function pad_gradients(gradients, kernelSize)
 
-    padding = zeros(kernelSize[1], kernelSize[2] - 1)
+    padding = CuArray(zeros(kernelSize[1], kernelSize[2] - 1))
     padded = hcat(padding,gradients)
     return padded
 
@@ -243,7 +244,7 @@ end
 ## Filter gradients using Tullio for efficient convolution
 function filter_gradients(gradients::Matrix, kernel::Matrix)
 
-    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a]
+    @tullio d[b, i] := gradients[b, i+a-1] * kernel[b, a]
     return d
 
 end
@@ -251,7 +252,7 @@ end
 ## Filter gradients using Tullio for efficient convolution
 function filter_gradients(gradients, kernel)
 
-    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a]
+    @tullio d[b, i] := gradients[b, i+a-1] * kernel[b, a]
     return d
 
 end
@@ -265,7 +266,7 @@ function gradients_to_nodes(gradients::Matrix)
 end
 
 ## Convert gradients to trajectory nodes
-function gradients_to_nodes(gradients::Array)
+function gradients_to_nodes(gradients)
 
     nodes = cumsum(gradients, dims = 2)
     return nodes
@@ -284,7 +285,7 @@ function apply_td_girf(nodes::Matrix, kernel::Matrix)
 end
 
 ## Efficient function to apply a time domain gradient impulse response function kernel to the trajectory (2D only now)
-function apply_td_girf(nodes::Array, kernel::Array)
+function apply_td_girf(nodes, kernel)
 
     gradients = nodes_to_gradients(nodes)
     padded = pad_gradients(gradients, size(kernel))
@@ -413,6 +414,9 @@ function getGaussianKernel(kernel_length)
 
 end
 
+## DEBUG
+CUDA.allowscalar(false)
+
 ## Define Kernel Length
 kernel_length = 5
 
@@ -427,9 +431,9 @@ imShape = (N, M)
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 17]
 
 img_small = ImageTransformations.restrict(B)
-img_medium = ImageTransformations.restrict(img_small)
+#img_medium = ImageTransformations.restrict(img_small)
 
-I_mage = img_medium
+I_mage = img_small
 
 imShape = size(I_mage)
 
@@ -509,17 +513,25 @@ numiters = 100
 
 testKernLength = kernel_length
 
+@info "\nUSING CPU: "
+@benchmark weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions,get_weights(nodes_to_gradients(perturbedNodes)))
+
 
 ## Prepare CUDA
 kernel = CuMatrix(ones(2,testKernLength)./testKernLength)
-dat = CuMatrix(Vector{Float64}(undef,numiters))
-datK = CuMatrix(Vector{Float64}(undef,numiters))
+dat = CuVector{Float64}(undef,numiters)
+datK = CuVector{Float64}(undef,numiters)
 
 positionsRef = CuMatrix(positionsRef)
-weights = CuMatrix(weights)
-perturbedSim = CuMatrix(perturbedSim)
-reconRef = CuMatrix(reconRef)
+weights = CuVector(weights)
+perturbedSim = CuVector(perturbedSim)
+reconRef = CuVector(reconRef)
 nodesRef = CuMatrix(nodesRef)
+perturbedNodes = CuMatrix(perturbedNodes)
+
+@info "\nUSING GPU: "
+@benchmark weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positionsRef,get_weights(nodes_to_gradients(perturbedNodes)))
+
 
 for i = 1:numiters
 
@@ -532,26 +544,28 @@ for i = 1:numiters
         return training_loss
     end
 
-    #dat[i] = training_loss
-    #datK[i] = Flux.Losses.mse(ker,kernel)
+    # CUDA.@allowscalar dat[i] = training_loss
+    # CUDA.@allowscalar datK[i] = Flux.Losses.mse(ker,kernel)
 
-    #print("[ITERATION $i] Train  Loss: ",dat[i],"\n")
-    #print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
+    print("[ITERATION $i] Train  Loss: ",training_loss,"\n")
+    # print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
 
     Flux.update!(opt,ps,gs)
 
 end
 
-figure()
-plot(dat)
-plot(datK)
 
-outputTrajectory = real(apply_td_girf(nodesRef,kernel))
+
+# figure()
+# plot(dat)
+# plot(datK)
+
+outputTrajectory = real(apply_td_girf(nodesRef,kernel))|>cpu
 
 @time finalRecon = weighted_EHMulx_Tullio(perturbedSim,outputTrajectory,positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
 
-plotError(finalRecon,recon2, imShape)
+#plotError(finalRecon,recon2, imShape)
 
-showReconstructedImage(finalRecon,imShape,true)
+#showReconstructedImage(finalRecon,imShape,true)
 
 #plotError(finalRecon,recon1, imShape)
