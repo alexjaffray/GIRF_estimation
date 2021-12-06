@@ -456,15 +456,15 @@ function getPSNR(imageRef, imageReconstructed)
 end
 
 ## Define Kernel Length
-kernel_length = 7
+kernel_length = 5
 
 ## Get ground truth kernel
 #ker = getGaussianKernel(kernel_length)
-ker = deltaKernel(kernel_length, 6)
+ker = deltaKernel(kernel_length, 1)
 
 ## Test Setting Up Simulation (forward sim)
-N = 112
-M = 92
+N = 56
+M = 46
 imShape = (N, M)
 
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 14]
@@ -484,7 +484,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]*2
-parameters[:windings] = 60
+parameters[:windings] = 30
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation to get the trajectory to perturb!
@@ -542,7 +542,7 @@ plotError(initialReconstruction, recon2, imShape)
 # end
 
 ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
-opt = ADAM() # Add 0.00001 as learning rate for better performance.
+opt = ADAM(0.01) # Add 0.00001 as learning rate for better performance.
 
 sqnorm(x) = sum(abs2, x)
 
@@ -557,11 +557,11 @@ dat = Vector{Float64}(undef,numiters)
 datK = Vector{Float64}(undef,numiters)
 
 # Test Adding Noise to the perturbed Data!
-perturbedSim = perturbedSim + randn(length(perturbedSim)) + 1im.*randn(length(perturbedSim))
+#perturbedSim = perturbedSim + randn(length(perturbedSim)) + 2 .* 1im.*randn(length(perturbedSim))
 
 for i = 1:numiters
 
-    global weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
+    local weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
     local training_loss
 
     ps = Params([kernel])

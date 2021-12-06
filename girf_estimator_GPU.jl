@@ -511,19 +511,19 @@ testKernLength = kernel_length
 
 
 ## Prepare CUDA
-kernel = cu(ones(2,testKernLength)./testKernLength)
-dat = cu(Vector{Float64}(undef,numiters))
-datK = cu(Vector{Float64}(undef,numiters))
+kernel = CuMatrix(ones(2,testKernLength)./testKernLength)
+dat = CuMatrix(Vector{Float64}(undef,numiters))
+datK = CuMatrix(Vector{Float64}(undef,numiters))
 
-positionsRef = cu(positionsRef)
-weights = cu(weights)
-perturbedSim = cu(perturbedSim)
-reconRef = cu(reconRef)
-nodesRef = cu(nodesRef)
+positionsRef = CuMatrix(positionsRef)
+weights = CuMatrix(weights)
+perturbedSim = CuMatrix(perturbedSim)
+reconRef = CuMatrix(reconRef)
+nodesRef = CuMatrix(nodesRef)
 
 for i = 1:numiters
 
-    global weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
+    local weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
     local training_loss
 
     ps = Params([kernel])
