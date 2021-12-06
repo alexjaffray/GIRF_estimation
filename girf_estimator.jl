@@ -133,6 +133,14 @@ function plotTrajectories(t_nom,t_perturbed,t_solved)
 
 end
 
+function plotKernels(k_gt,k_est)
+
+    figure("Kernel Comparison")
+    plot(k_gt',label="ground truth kernel")
+    plot(k_est',label="estimate kernel")
+    legend(loc="upper left")
+end
+
 ## Function for plotting the voxel-wise errors between two Complex-valued images x and y of a given shape sh
 function plotError(x, y, sh)
 
@@ -305,7 +313,6 @@ end
 
 ## Efficient function to apply a time domain gradient impulse response function kernel to the trajectory (2D only now)
 function apply_td_girf(nodes::Matrix, kernel::Matrix)
-
     gradients = nodes_to_gradients(nodes)
     padded = pad_gradients(gradients, size(kernel))
     filtered = filter_gradients(padded, kernel)
@@ -433,15 +440,31 @@ function getGaussianKernel(kernel_length)
 
 end
 
+## Generates delay kernel
+function deltaKernel(kernel_length, shift)
+
+    x = zeros(2,kernel_length)
+    x[:,kernel_length - shift] .= 1.0
+    return x
+
+end
+
+function getPSNR(imageRef, imageReconstructed)
+
+    PSNR
+
+end
+
 ## Define Kernel Length
-kernel_length = 3
+kernel_length = 7
 
 ## Get ground truth kernel
-ker = getGaussianKernel(kernel_length)
+#ker = getGaussianKernel(kernel_length)
+ker = deltaKernel(kernel_length, 6)
 
 ## Test Setting Up Simulation (forward sim)
-N = 226
-M = 186
+N = 56
+M = 46
 imShape = (N, M)
 
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 14]
@@ -460,8 +483,8 @@ parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 120
+parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]*2
+parameters[:windings] = 30
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation to get the trajectory to perturb!
@@ -524,7 +547,7 @@ opt = ADAM() # Add 0.00001 as learning rate for better performance.
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 300
+numiters = 1000
 
 testKernLength = kernel_length
 
@@ -533,6 +556,9 @@ kernel = ones(2,testKernLength)./testKernLength
 dat = Vector{Float64}(undef,numiters)
 datK = Vector{Float64}(undef,numiters)
 
+# Test Adding Noise to the perturbed Data!
+perturbedSim = perturbedSim + randn(length(perturbedSim)) + 1im.*randn(length(perturbedSim))
+
 for i = 1:numiters
 
     global weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
@@ -540,16 +566,17 @@ for i = 1:numiters
 
     ps = Params([kernel])
     gs = gradient(ps) do
-        training_loss = loss(weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) #+ sqnorm(kernel)
+        training_loss = loss(weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) #+ 500*sqnorm(kernel)
         return training_loss
     end
 
     dat[i] = training_loss
-    datK[i] = Flux.Losses.mae(ker,kernel)
+    datK[i] = Flux.Losses.mse(ker,kernel)
 
     print("[ITERATION $i] Train  Loss: ",dat[i],"\n")
     print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
 
+    
     Flux.update!(opt,ps,gs)
 
 end
@@ -568,3 +595,5 @@ showReconstructedImage(finalRecon,imShape,true)
 
 compareReconstructedImages(initialReconstruction,finalRecon,imShape,true)
 plotTrajectories(nodesRef, perturbedNodes,outputTrajectory)
+
+plotKernels(ker,kernel)
