@@ -463,8 +463,8 @@ kernel_length = 7
 ker = deltaKernel(kernel_length, 6)
 
 ## Test Setting Up Simulation (forward sim)
-N = 56
-M = 46
+N = 112
+M = 92
 imShape = (N, M)
 
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 14]
@@ -484,7 +484,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]*2
-parameters[:windings] = 30
+parameters[:windings] = 60
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation to get the trajectory to perturb!
