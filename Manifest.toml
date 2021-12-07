@@ -788,9 +788,9 @@ version = "0.7.31"
 
 [[NNlibCUDA]]
 deps = ["CUDA", "LinearAlgebra", "NNlib", "Random", "Statistics"]
-git-tree-sha1 = "38358632d9c277f7bf8d202c127f601e8467aa4d"
+git-tree-sha1 = "a2dc748c9f6615197b6b97c10bcce829830574c9"
 uuid = "a00861dc-f156-4864-bf3c-e6376f28a68d"
-version = "0.1.10"
+version = "0.1.11"
 
 [[NaNMath]]
 git-tree-sha1 = "bfe47e760d60b82b66b61d2d44128b62e3a369fb"
@@ -1198,10 +1198,10 @@ uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 version = "0.9.6"
 
 [[Tullio]]
-deps = ["ChainRulesCore", "DiffRules", "LinearAlgebra", "Requires"]
-git-tree-sha1 = "0288b7a395fc412952baf756fac94e4f28bfec65"
+deps = ["DiffRules", "LinearAlgebra", "Requires"]
+git-tree-sha1 = "7201bbb4c138c18bf14511c4cc8daeac6a52c148"
 uuid = "bc48ee85-29a4-5162-ae0b-a64e1601d4bc"
-version = "0.3.2"
+version = "0.2.14"
 
 [[UUIDs]]
 deps = ["Random", "SHA"]
@@ -1268,9 +1268,9 @@ version = "1.5.0+0"
 
 [[Zygote]]
 deps = ["AbstractFFTs", "ChainRules", "ChainRulesCore", "DiffRules", "Distributed", "FillArrays", "ForwardDiff", "IRTools", "InteractiveUtils", "LinearAlgebra", "MacroTools", "NaNMath", "Random", "Requires", "SpecialFunctions", "Statistics", "ZygoteRules"]
-git-tree-sha1 = "76475a5aa0be302c689fd319cd257cd1a512fb3c"
+git-tree-sha1 = "2c30f2df0ba43c17e88c8b55b5b22c401f7cde4e"
 uuid = "e88e6eb3-aa80-5325-afca-941959d7151f"
-version = "0.6.32"
+version = "0.6.30"
 
 [[ZygoteRules]]
 deps = ["MacroTools"]
