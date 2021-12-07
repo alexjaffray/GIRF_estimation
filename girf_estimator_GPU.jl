@@ -18,7 +18,7 @@ using
     CUDAKernels,
     Tullio
 
-    
+
 #use pyplot backend with interactivity turned on
 pygui(true)
 
@@ -37,7 +37,7 @@ function plotTrajectoryError(x, y)
 end
 
 ## Show reconstructed image magnitude and phase including normalization if specified
-function showReconstructedImage(x,sh,do_normalization)
+function showReconstructedImage(x, sh, do_normalization)
 
     fig = figure("Reconstruction", figsize = (10, 4))
 
@@ -48,7 +48,7 @@ function showReconstructedImage(x,sh,do_normalization)
 
     ## Normalize step:
     if do_normalization
-        reshapedMag = reshapedMag./x_max
+        reshapedMag = reshapedMag ./ x_max
         x_max = 1.0
     end
 
@@ -87,200 +87,88 @@ function plotError(x, y, sh)
 
 end
 
-## Generic Allocator for the E system matrix
-function prepareE(imShape)
 
-    # construct E in place
-    E = Array{ComplexF32}(undef, imShape[1] * imShape[2], imShape[1] * imShape[2])
-
-    positions = getPositions(imShape)
-
-    return E, positions
-
-end
-
-## Memory Efficient Multi-threaded in-place E constructor
-function constructE!(E, nodes::Matrix, positions::Matrix)
-
-    phi = nodes' * positions
-
-    Threads.@threads for i in eachindex(phi)
-        E[i] = cispi(-2 * phi[i])
-    end
-
-end
-
-## Memory Efficient Multi-threaded in-place EH constructor
-function constructEH!(EH, nodes::Matrix, positions::Matrix)
-
-    phi = positions * nodes'
-
-    Threads.@threads for i in eachindex(phi)
-        EH[i] = cispi(2 * phi[i])
-    end
-
-end
-
-## Single Threaded Explicit Passing Version for Autodiff compat. 
-function EMulx(x, nodes::Matrix, positions::Matrix)
-
-    E = constructE(nodes, positions)
-    y = E * x
-    return y
-
-end
-
-## Single Threaded Explicit Passing Version for Autodiff compat.
-function EHMulx(x, nodes::Matrix, positions::Matrix)
-
-    EH = constructEH(nodes, positions)
-    y = EH * x
-    return y
-
-end
 
 ## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
-function EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
+function weighted_EMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights)
 
-    @tullio E[k, n] := exp <| (-1.0im * pi * 2.0 * nodes[i, k] * $positions[i, n])
-    @tullio y[k] := E[k, n] * $x[n]
+    # Separation of real and imaginary parts to play well with GPU
+    @tullio RE_E[k, n] := cos <| (-Float32(pi) * 2 * nodes[i, k] * $positions[i, n])
+    @tullio IM_E[k, n] := sin <| (-Float32(pi) * 2 * nodes[i, k] * $positions[i, n])
 
-    return y
+    @tullio y_re[k] := RE_E[k, n] * x_re[n] - IM_E[k, n] * x_im[n]
+    @tullio y_im[k] := IM_E[k, n] * x_re[n] + RE_E[k, n] * x_im[n]
 
-end
+    w_re = weights .* y_re
+    w_im = weights .* y_im
 
-## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
-function weighted_EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64}, weights::Vector{Float64})
-
-    #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
-    @tullio E[k, n] := exp <| (-1.0im * pi * 2.0 * nodes[i, k] * $positions[i, n])
-    @tullio y[k] := weights[k] * E[k, n] * $x[n]
-
-    return y
+    return (w_re, w_im)
 
 end
 
-## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
-function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
-
-    @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
-    @tullio y[n] := EH[n, k] * $x[k]
-
-    return y
-
-end
 
 function get_weights(gradients)
 
-    @tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
-    CUDA.@allowscalar W = W./max(W...)
+    @tullio W[k] := sqrt <| $gradients[i, k] * $gradients[i, k] ## Define weights as magnitude of gradients
+    W = W ./ maximum(W)
     return W
 
 end
 
-## Weighted Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
-function weighted_EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64}, weights::Vector{Float64})
+## Weighted Version of Matrix-Vector Multiplication using Tullio.jl with real matrices and CUDA compat...
+function weighted_EHMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights)
 
-    # TODO: ADD DENSITY COMPENSATION FUNCTION AS DESCRIBED IN NOLL, FESSLER and SUTTON
-    #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
-    @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
-    @tullio y[n] := EH[n, k] * (weights[k]*$x[k])
+    w_re = weights .* x_re
+    w_im = weights .* x_im
 
-    return y
+    # Separation of real and imaginary parts to play well with GPU
+    @tullio RE_E[n, k] := cos <| (Float32(pi) * 2 * $positions[i, n] * nodes[i, k])
+    @tullio IM_E[n, k] := sin <| (Float32(pi) * 2 * $positions[i, n] * nodes[i, k])
 
-end
+    @tullio y_re[n] := RE_E[n, k] * w_re[k] - IM_E[n, k] * w_im[k]
+    @tullio y_im[n] := IM_E[n, k] * w_re[k] + RE_E[n, k] * w_im[k]
 
-## Weighted Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
-function weighted_EHMulx_Tullio(x, nodes, positions, weights)
-
-    # TODO: ADD DENSITY COMPENSATION FUNCTION AS DESCRIBED IN NOLL, FESSLER and SUTTON
-    #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
-    @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
-    @tullio y[n] := EH[n, k] * (weights[k]*$x[k])
-
-    return y
+    return (y_re, y_im)
 
 end
 
-## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
-function EHMulx_Tullio(x, nodes::Array{Float64,4}, positions::Matrix{Float64})
 
-    nodes2 = undoReshape(nodes)
-
-    @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes2[i, k])
-    @tullio y[n] := EH[n, k] * $x[k]
-
-    return y
-
-end
 
 ## Get gradients from the trajectory
 function nodes_to_gradients(nodes)
 
-    newNodes = hcat(CuArray([0;0]),nodes)
+    newNodes = hcat(CuArray([0; 0]), nodes)
     gradients = diff(newNodes, dims = 2)
     return gradients
 
 end
 
-## Pad gradients to prepare for Tullio
-function pad_gradients(gradients::Matrix, kernelSize)
 
-    padding = zeros(kernelSize[1], kernelSize[2] - 1)
-    padded = hcat(padding, gradients)
-    return padded
-
-end
 
 ## Pad gradients to prepare for Tullio
 function pad_gradients(gradients, kernelSize)
 
-    padding = CuArray(zeros(kernelSize[1], kernelSize[2] - 1))
-    padded = hcat(padding,gradients)
+    padding = CuArray(zeros(Float32, kernelSize[1], kernelSize[2] - 1))
+    padded = hcat(padding, gradients)
     return padded
-
-end
-
-## Filter gradients using Tullio for efficient convolution
-function filter_gradients(gradients::Matrix, kernel::Matrix)
-
-    @tullio d[b, i] := gradients[b, i+a-1] * kernel[b, a]
-    return d
 
 end
 
 ## Filter gradients using Tullio for efficient convolution
 function filter_gradients(gradients, kernel)
 
-    @tullio d[b, i] := gradients[b, i+a-1] * kernel[b, a]
+    @tullio d[b, i] := $gradients[b, i+a-1] * kernel[b, a]
     return d
 
 end
 
-## Convert gradients to trajectory nodes
-function gradients_to_nodes(gradients::Matrix)
 
-    nodes = cumsum(gradients, dims = 2)
-    return nodes
-
-end
 
 ## Convert gradients to trajectory nodes
 function gradients_to_nodes(gradients)
 
     nodes = cumsum(gradients, dims = 2)
     return nodes
-
-end
-
-## Efficient function to apply a time domain gradient impulse response function kernel to the trajectory (2D only now)
-function apply_td_girf(nodes::Matrix, kernel::Matrix)
-
-    gradients = nodes_to_gradients(nodes)
-    padded = pad_gradients(gradients, size(kernel))
-    filtered = filter_gradients(padded, kernel)
-    filtered_nodes = gradients_to_nodes(filtered)
-    return filtered_nodes
 
 end
 
@@ -296,43 +184,11 @@ function apply_td_girf(nodes, kernel)
 end
 
 ## Get the padded gradient waveform
-function get_padded_gradients(nodes::Matrix, kernelSize::Tuple)
+function get_padded_gradients(nodes, kernelSize)
 
     g = nodes_to_gradients(nodes)
-    padded = pad_gradients(g,kernelSize)
+    padded = pad_gradients(g, kernelSize)
     return padded
-
-end
-
-## Single Threaded Explicit Passing Version for Autodiff compat.
-function constructE(nodes::Matrix, positions::Matrix)
-
-    phi = nodes' * positions'
-
-    # Multithreaded
-    # Threads.@threads for i in eachindex(phi)
-    #     E[i] = cispi(-2 * phi[i])
-    # end
-
-    E = cispi.(-2 * phi[i])
-
-    return E
-
-end
-
-## Single Threaded Explicit Passing Version for Autodiff compat.
-function constructEH(nodes::Matrix, positions::Matrix)
-
-    phi = positions * nodes
-
-    # Multithreaded
-    # Threads.@threads for i in eachindex(phi)
-    #     EH[i] = cispi(2 * phi[i])
-    # end
-
-    EH = cispi.(2 * phi)
-
-    return EH
 
 end
 
@@ -389,28 +245,36 @@ end
 function loss(x, y)
 
     #Flux.Losses.mse(real(x), real(y)) + Flux.Losses.mse(imag(x), imag(y))
-    Flux.Losses.mae(x,y)
+    Flux.Losses.mae(x, y)
 
 end
 
-## Custom simulation function 
-function groundtruth_sim(nodes::Matrix, image, kernel, positions)
-
-    outputData = EMulx_Tullio(vec(image),apply_td_girf(nodes, kernel),positions)
-    return outputData
-
-
-end
 
 ## Generates ground truth gaussian kernel
 # TODO: Add support for variable width
 function getGaussianKernel(kernel_length)
 
     ## Generate Ground Truth Filtering Kernel
-    ker = rand(2,kernel_length)
-    ker[1,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (50))
-    ker[2,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (25))
-    ker = ker ./ sum(ker, dims=2)    
+    ker = rand(2, kernel_length)
+    ker[1, :] = exp.(.-(-kernel_length÷2:kernel_length÷2) .^ 2 ./ (50))
+    ker[2, :] = exp.(.-(-kernel_length÷2:kernel_length÷2) .^ 2 ./ (25))
+    ker = ker ./ sum(ker, dims = 2)
+
+end
+
+## Generates delay kernel
+function deltaKernel(kernel_length, shift)
+
+    x = zeros(2,kernel_length)
+    x[:,kernel_length - shift] .= 1.0
+    return x
+
+end
+
+function pull_from_gpu(imTuple)
+
+    cpuTuple = imTuple |> cpu
+    return complex.(cpuTuple...)
 
 end
 
@@ -418,19 +282,21 @@ end
 CUDA.allowscalar(false)
 
 ## Define Kernel Length
-kernel_length = 5
+kernel_length = 11
 
 ## Get ground truth kernel
 ker = getGaussianKernel(kernel_length)
 
+ker = CuMatrix(Float32.(ker))
+
 ## Test Setting Up Simulation (forward sim)
-N = 226
-M = 186
+N = 156
+M = 128
 imShape = (N, M)
 
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 17]
 
-img_small = ImageTransformations.restrict(B)
+img_small = ImageTransformations.imresize(B, imShape)
 #img_medium = ImageTransformations.restrict(img_small)
 
 I_mage = img_small
@@ -444,8 +310,8 @@ parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 32
+parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
+parameters[:windings] = 86
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation to get the trajectory to perturb!
@@ -454,40 +320,47 @@ positions = getPositions(imShape)
 nodesRef = deepcopy(acqData.traj[1].nodes)
 signalRef = deepcopy(acqData.kdata[1])
 
+## Put everything on the GPU
+positionsRef = CuMatrix(Float32.(positions))
+nodesRef = CuMatrix(Float32.(nodesRef))
+image_real = CuMatrix(Float32.(real.(I_mage)))
+image_imag = CuMatrix(Float32.(imag.(I_mage)))
+
 ## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
-@time referenceSim = weighted_EMulx_Tullio(I_mage, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
+@time referenceSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
 
 ## Define Perfect Reconstruction
-@time recon1 = weighted_EHMulx_Tullio(referenceSim, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
+@time recon1 = weighted_EHMulx_Tullio_Sep(referenceSim[1], referenceSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
 #normalizeRecon!(recon1)
-showReconstructedImage(recon1, imShape,true)
 
+## Show the reconstruction
+showReconstructedImage(pull_from_gpu(recon1), imShape, true)
 
 ## Plot the actual nodes used for the perfect reconstruction
-figure()
-scatter(nodesRef[1, :], nodesRef[2, :])
+#figure()
+#scatter(nodesRef[1, :], nodesRef[2, :])
 
 perturbedNodes = apply_td_girf(nodesRef, ker)
 
-@time perturbedSim = weighted_EMulx_Tullio(I_mage, perturbedNodes, positions, get_weights(nodes_to_gradients(perturbedNodes)))
+@time perturbedSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, perturbedNodes, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
 
 ## Plot the new nodes
-scatter(perturbedNodes[1, :], perturbedNodes[2, :])
+#scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
 ## Reconstruct with perturbed nodes
-@time recon2 = weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions,get_weights(nodes_to_gradients(perturbedNodes)))
-showReconstructedImage(recon2, imShape,true)
+@time recon2 = weighted_EHMulx_Tullio_Sep(perturbedSim[1], perturbedSim[2], perturbedNodes, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
+showReconstructedImage(pull_from_gpu(recon2), imShape, true)
 #normalizeRecon!(recon2)
 
-plotError(recon1, recon2, imShape)
+#plotError(recon1, recon2, imShape)
 
 ## Input Data
 reconRef = deepcopy(recon2)
 positionsRef = deepcopy(collect(positions))
 weights = get_weights(nodes_to_gradients(nodesRef))
 
-initialReconstruction = weighted_EHMulx_Tullio(perturbedSim,nodesRef,positionsRef, weights)
-showReconstructedImage(initialReconstruction,imShape,true)
+initialReconstruction = weighted_EHMulx_Tullio_Sep(perturbedSim[1],perturbedSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
+showReconstructedImage(pull_from_gpu(initialReconstruction), imShape, true)
 plotError(initialReconstruction, recon2, imShape)
 
 # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
@@ -513,14 +386,13 @@ numiters = 100
 
 testKernLength = kernel_length
 
-@info "\nUSING CPU: "
-@benchmark weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions,get_weights(nodes_to_gradients(perturbedNodes)))
-
+# @info "\nUSING CPU: "
+# @benchmark weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions,get_weights(nodes_to_gradients(perturbedNodes)))
 
 ## Prepare CUDA
-kernel = CuMatrix(ones(2,testKernLength)./testKernLength)
-dat = CuVector{Float64}(undef,numiters)
-datK = CuVector{Float64}(undef,numiters)
+kernel = CuMatrix(ones(2, testKernLength) ./ testKernLength)
+dat = CuVector{Float64}(undef, numiters)
+datK = CuVector{Float64}(undef, numiters)
 
 positionsRef = CuMatrix(positionsRef)
 weights = CuVector(weights)
@@ -529,43 +401,39 @@ reconRef = CuVector(reconRef)
 nodesRef = CuMatrix(nodesRef)
 perturbedNodes = CuMatrix(perturbedNodes)
 
-@info "\nUSING GPU: "
-@benchmark weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positionsRef,get_weights(nodes_to_gradients(perturbedNodes)))
-
+# ## InTerp vars into benchmark
+# @info "\nUSING GPU: "
+# @benchmark weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positionsRef,get_weights(nodes_to_gradients(perturbedNodes)))
 
 for i = 1:numiters
 
-    local weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
-    local training_loss
-
     ps = Params([kernel])
-    gs = gradient(ps) do
-        training_loss = loss(weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) #+ sqnorm(kernel)
-        return training_loss
-    end
 
+    train_loss, back = Zygote.pullback(() -> loss(weighted_EHMulx_Tullio(perturbedSim, real(apply_td_girf(nodesRef, kernel)), positionsRef, get_weights(nodes_to_gradients((apply_td_girf(nodesRef, kernel))))), reconRef), ps)
+
+    gs = back(one(train_loss))
+
+    println(gs)
     # CUDA.@allowscalar dat[i] = training_loss
     # CUDA.@allowscalar datK[i] = Flux.Losses.mse(ker,kernel)
 
-    print("[ITERATION $i] Train  Loss: ",training_loss,"\n")
+    println("[ITERATION $i] Train  Loss: ", train_loss)
     # print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
 
-    Flux.update!(opt,ps,gs)
+    Flux.update!(opt, ps, gs)
 
 end
-
-
 
 # figure()
 # plot(dat)
 # plot(datK)
 
-outputTrajectory = real(apply_td_girf(nodesRef,kernel))|>cpu
+outputTrajectory = real(apply_td_girf(nodesRef, kernel))
 
-@time finalRecon = weighted_EHMulx_Tullio(perturbedSim,outputTrajectory,positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
+@time finalRecon = weighted_EHMulx_Tullio(perturbedSim, outputTrajectory, positionsRef, get_weights(nodes_to_gradients(outputTrajectory))) |> cpu
 
-#plotError(finalRecon,recon2, imShape)
+plotError(finalRecon, recon2, imShape)
 
 #showReconstructedImage(finalRecon,imShape,true)
 
-#plotError(finalRecon,recon1, imShape)
+plotError(finalRecon, recon1, imShape)

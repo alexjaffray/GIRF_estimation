@@ -249,7 +249,7 @@ end
 function get_weights(gradients::Matrix)
 
     @tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
-    W = W./max(W...)
+    W = W/maximum(W)
     return W
 
 end
@@ -298,7 +298,7 @@ end
 ## Filter gradients using Tullio for efficient convolution
 function filter_gradients(gradients::Matrix, kernel::Matrix)
 
-    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a]
+    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a] verbose = true
     return d
 
 end
@@ -308,6 +308,40 @@ function gradients_to_nodes(gradients::Matrix)
 
     nodes = cumsum(gradients, dims = 2)
     return nodes
+
+end
+
+## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
+function weighted_EMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights)
+
+    # Separation of real and imaginary parts to play well with GPU
+    @tullio RE_E[k, n] := cos <| (- pi * 2.0 * nodes[i, k] * $positions[i, n])
+    @tullio IM_E[k, n] := sin <| (- pi * 2.0 * nodes[i, k] * $positions[i, n])
+
+    @tullio y_re[k] := RE_E[k, n]*x_re[n] - IM_E[k, n]*x_im[n]
+    @tullio y_im[k] := IM_E[k, n]*x_re[n] + RE_E[k, n]*x_im[n]
+
+    w_re = weights .* y_re
+    w_im = weights .* y_im
+
+    return (w_re, w_im)
+
+end
+
+## Weighted Version of Matrix-Vector Multiplication using Tullio.jl with real matrices and CUDA compat...
+function weighted_EHMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights)
+
+    w_re = weights .* x_re
+    w_im = weights .* x_im
+
+    # Separation of real and imaginary parts to play well with GPU
+    @tullio RE_E[n, k] := cos <| (pi * 2.0 * $positions[i, n] * nodes[i, k])
+    @tullio IM_E[n, k] := sin <| (pi * 2.0 * $positions[i, n] * nodes[i, k])
+
+    @tullio y_re[n] := RE_E[n,k]*w_re[k] - IM_E[n,k]*w_im[k]
+    @tullio y_im[n] := IM_E[n,k]*w_re[k] + RE_E[n,k]*w_im[k]
+
+    return (y_re,y_im)
 
 end
 
@@ -446,12 +480,6 @@ function deltaKernel(kernel_length, shift)
     x = zeros(2,kernel_length)
     x[:,kernel_length - shift] .= 1.0
     return x
-
-end
-
-function getPSNR(imageRef, imageReconstructed)
-
-    PSNR
 
 end
 
