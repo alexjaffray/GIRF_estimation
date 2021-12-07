@@ -271,10 +271,16 @@ function deltaKernel(kernel_length, shift)
 
 end
 
-function pull_from_gpu(imTuple)
+function pull_from_gpu(imTuple::Tuple)
 
     cpuTuple = imTuple |> cpu
     return complex.(cpuTuple...)
+
+end
+
+function pull_from_gpu(array::CuMatrix)
+
+    array |> cpu
 
 end
 
@@ -352,16 +358,16 @@ perturbedNodes = apply_td_girf(nodesRef, ker)
 showReconstructedImage(pull_from_gpu(recon2), imShape, true)
 #normalizeRecon!(recon2)
 
-#plotError(recon1, recon2, imShape)
+plotError(pull_from_gpu(recon1), pull_from_gpu(recon2), imShape)
 
 ## Input Data
 reconRef = deepcopy(recon2)
 positionsRef = deepcopy(collect(positions))
 weights = get_weights(nodes_to_gradients(nodesRef))
 
-initialReconstruction = weighted_EHMulx_Tullio_Sep(perturbedSim[1],perturbedSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
-showReconstructedImage(pull_from_gpu(initialReconstruction), imShape, true)
-plotError(initialReconstruction, recon2, imShape)
+naiveReconstruction = weighted_EHMulx_Tullio_Sep(perturbedSim[1],perturbedSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
+showReconstructedImage(pull_from_gpu(naiveReconstruction), imShape, true)
+plotError(pull_from_gpu(initialReconstruction), pull_from_gpu(recon2), imShape)
 
 # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
 # See example below: 
