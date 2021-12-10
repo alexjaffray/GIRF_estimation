@@ -244,9 +244,8 @@ end
 ## Loss function for the minimization -> works over the real and imaginary parts of the image separately
 function loss(x, y)
 
-    #Flux.Losses.mse(real(x), real(y)) + Flux.Losses.mse(imag(x), imag(y))
-    Flux.Losses.mae(x, y)
-
+    Flux.Losses.mae(x[1],y[1]) + Flux.Losses.mae(x[2],y[2])
+    
 end
 
 
@@ -410,6 +409,8 @@ perturbedNodes = CuMatrix(perturbedNodes)
 # ## InTerp vars into benchmark
 # @info "\nUSING GPU: "
 # @benchmark weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positionsRef,get_weights(nodes_to_gradients(perturbedNodes)))
+
+# WORKS UP TO HERE
 
 for i = 1:numiters
 
