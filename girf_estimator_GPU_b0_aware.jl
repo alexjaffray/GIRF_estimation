@@ -344,8 +344,9 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
-parameters[:windings] = 86
+parameters[:windings] = 78
 parameters[:AQ] = 1e-6 * parameters[:numSamplingPerProfile]
+parameters[:correctionMap] = 1im .* quadraticFieldmap(N,M,125.0*2*pi)
 
 ## Do simulation to get the trajectory to perturb!
 acqData = simulation(I_mage, parameters)
@@ -359,14 +360,18 @@ nodesRef = CuMatrix(Float32.(nodesRef))
 image_real = CuMatrix(Float32.(real.(I_mage)))
 image_imag = CuMatrix(Float32.(imag.(I_mage)))
 
-b0_map = CuVector(Float32.(vec(quadraticFieldmap(N,M,125*2pi))))
+b0_map = CuVector(Float32.(vec(quadraticFieldmap(N,M,125.0*2*pi))))
 times = CuVector(Float32.(acqData.traj[1].times))
+
+cuSig = (CuVector(Float32.(real.(vec(acqData.kdata[1])))),CuVector(Float32.(imag.(vec(acqData.kdata[1])))))
+@time simReconGT = weighted_EHMulx_Tullio_Sep(cuSig[1],cuSig[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
+showReconstructedImage(pull_from_gpu(simReconGT), imShape, true)
 
 ## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
 @time referenceSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)), b0_map, times)
 
 ## Define Perfect Reconstruction
-@time recon1 = weighted_EHMulx_Tullio_Sep(referenceSim[1], referenceSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)), b0_map, times)
+@time recon1 = weighted_EHMulx_Tullio_Sep(referenceSim[1], referenceSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
 #normalizeRecon!(recon1)
 
 ## Show the reconstruction
@@ -396,6 +401,8 @@ weights = get_weights(nodes_to_gradients(nodesRef))
 
 naiveReconstruction = weighted_EHMulx_Tullio_Sep(perturbedSim[1],perturbedSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
 showReconstructedImage(pull_from_gpu(naiveReconstruction), imShape, true)
+
+
 plotError(pull_from_gpu(naiveReconstruction), pull_from_gpu(recon2), imShape)
 
 # BELOW IS COMMENTED OUT
