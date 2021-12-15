@@ -298,7 +298,7 @@ end
 ## Filter gradients using Tullio for efficient convolution
 function filter_gradients(gradients::Matrix, kernel::Matrix)
 
-    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a] verbose = true
+    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a]
     return d
 
 end
@@ -570,12 +570,12 @@ plotError(initialReconstruction, recon2, imShape)
 # end
 
 ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
-opt = ADAM(0.01) # Add 0.00001 as learning rate for better performance.
+opt = ADAM(0.0001) # Add 0.00001 as learning rate for better performance.
 
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 1000
+numiters = 5000
 
 testKernLength = kernel_length
 
