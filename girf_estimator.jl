@@ -135,8 +135,11 @@ end
 
 function plotKernels(k_gt,k_est)
 
+    kernel_size_difference = size(k_est,2) - size(k_gt,2)
+    k_gt_padded = hcat(zeros(2, kernel_size_difference), k_gt)
+
     figure("Kernel Comparison")
-    plot(k_gt',label="ground truth kernel")
+    plot(k_gt_padded',label="ground truth kernel")
     plot(k_est',label="estimate kernel")
     legend(loc="upper left")
 end
@@ -298,7 +301,7 @@ end
 ## Filter gradients using Tullio for efficient convolution
 function filter_gradients(gradients::Matrix, kernel::Matrix)
 
-    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a] verbose = true
+    @tullio d[b, i+_] := gradients[b, i+a] * kernel[b, a] #verbose = true
     return d
 
 end
@@ -487,8 +490,8 @@ end
 kernel_length = 5
 
 ## Get ground truth kernel
-#ker = getGaussianKernel(kernel_length)
-ker = deltaKernel(kernel_length, 1)
+ker = getGaussianKernel(kernel_length)
+#ker = deltaKernel(kernel_length, 1)
 
 ## Test Setting Up Simulation (forward sim)
 N = 56
@@ -511,7 +514,7 @@ parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]*2
+parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
 parameters[:windings] = 30
 parameters[:AQ] = 3.0e-2
 
@@ -570,19 +573,22 @@ plotError(initialReconstruction, recon2, imShape)
 # end
 
 ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
-opt = ADAM(0.01) # Add 0.00001 as learning rate for better performance.
+opt = ADAM(0.0002) # Add 0.00001 as learning rate for better performance.
 
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 1000
+numiters = 2000
 
-testKernLength = kernel_length
+testKernLength = kernel_length+5
 
 kernel = ones(2,testKernLength)./testKernLength
 
 dat = Vector{Float64}(undef,numiters)
 datK = Vector{Float64}(undef,numiters)
+
+kernel_size_difference = size(kernel,2) - size(ker,2)
+padded_ker = hcat(zeros(2, kernel_size_difference), ker)
 
 # Test Adding Noise to the perturbed Data!
 #perturbedSim = perturbedSim + randn(length(perturbedSim)) + 2 .* 1im.*randn(length(perturbedSim))
@@ -594,12 +600,12 @@ for i = 1:numiters
 
     ps = Params([kernel])
     gs = gradient(ps) do
-        training_loss = loss(weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) #+ 500*sqnorm(kernel)
+        training_loss = loss(weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) + norm(kernel,1)
         return training_loss
     end
 
     dat[i] = training_loss
-    datK[i] = Flux.Losses.mse(ker,kernel)
+    datK[i] = Flux.Losses.mse(padded_ker,kernel)
 
     print("[ITERATION $i] Train  Loss: ",dat[i],"\n")
     print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
