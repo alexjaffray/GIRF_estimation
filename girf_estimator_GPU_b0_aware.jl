@@ -96,13 +96,13 @@ function weighted_EMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights)
     @tullio RE_E[k, n] := cos <| (-Float32(pi) * 2 * nodes[i, k] * $positions[i, n])
     @tullio IM_E[k, n] := sin <| (-Float32(pi) * 2 * nodes[i, k] * $positions[i, n])
 
-    @tullio y_re[k] := RE_E[k, n] * x_re[n] - IM_E[k, n] * x_im[n]
-    @tullio y_im[k] := IM_E[k, n] * x_re[n] + RE_E[k, n] * x_im[n]
+    @tullio y_re[k] := (weights[k] * RE_E[k, n]) * x_re[n] - (weights[k] * IM_E[k, n]) * x_im[n]
+    @tullio y_im[k] := (weights[k] * IM_E[k, n]) * x_re[n] + (weights[k] * RE_E[k, n]) * x_im[n]
 
-    w_re = weights .* y_re
-    w_im = weights .* y_im
+    # w_re = weights .* y_re
+    # w_im = weights .* y_im
 
-    return (w_re, w_im)
+    return (y_re, y_im)
 
 end
 
@@ -113,13 +113,13 @@ function weighted_EMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights, b0_map
     @tullio RE_E[k, n] := cos <| (-Float32(pi) * 2 * nodes[i, k] * $positions[i, n] - times[k]*b0_map[n])
     @tullio IM_E[k, n] := sin <| (-Float32(pi) * 2 * nodes[i, k] * $positions[i, n] - times[k]*b0_map[n])
 
-    @tullio y_re[k] := RE_E[k, n] * x_re[n] - IM_E[k, n] * x_im[n]
-    @tullio y_im[k] := IM_E[k, n] * x_re[n] + RE_E[k, n] * x_im[n]
+    @tullio y_re[k] := (weights[k] * RE_E[k, n]) * x_re[n] - (weights[k] * IM_E[k, n]) * x_im[n]
+    @tullio y_im[k] := (weights[k] * IM_E[k, n]) * x_re[n] + (weights[k] * RE_E[k, n]) * x_im[n]
 
-    w_re = weights .* y_re
-    w_im = weights .* y_im
+    # w_re = weights .* y_re
+    # w_im = weights .* y_im
 
-    return (w_re, w_im)
+    return (y_re, y_im)
 
 end
 
@@ -135,15 +135,12 @@ end
 ## Weighted Version of Matrix-Vector Multiplication using Tullio.jl with real matrices and CUDA compat...
 function weighted_EHMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights)
 
-    w_re = weights .* x_re
-    w_im = weights .* x_im
-
     # Separation of real and imaginary parts to play well with GPU
-    @tullio RE_E[n, k] := cos <| (Float32(pi) * 2 * $positions[i, n] * nodes[i, k])
-    @tullio IM_E[n, k] := sin <| (Float32(pi) * 2 * $positions[i, n] * nodes[i, k])
+    @tullio RE_E[n, k] :=  cos <| (Float32(pi)  * 2 * $positions[i, n] * nodes[i, k])
+    @tullio IM_E[n, k] :=  sin <| (Float32(pi)  * 2 * $positions[i, n] * nodes[i, k])
 
-    @tullio y_re[n] := RE_E[n, k] * w_re[k] - IM_E[n, k] * w_im[k]
-    @tullio y_im[n] := IM_E[n, k] * w_re[k] + RE_E[n, k] * w_im[k]
+    @tullio y_re[n] := RE_E[n, k] * ($weights[k]*x_re[k]) - IM_E[n, k] * ($weights[k]*x_im[k])
+    @tullio y_im[n] := IM_E[n, k] * ($weights[k]*x_re[k]) + RE_E[n, k] * ($weights[k]*x_im[k])
 
     return (y_re, y_im)
 
@@ -152,15 +149,12 @@ end
 ## Weighted Version of Matrix-Vector Multiplication using Tullio.jl with real matrices and CUDA compat...
 function weighted_EHMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights, b0_map, times)
 
-    w_re = weights .* x_re
-    w_im = weights .* x_im
-
     # Separation of real and imaginary parts to play well with GPU
     @tullio RE_E[n, k] := cos <| (Float32(pi) * 2 * $positions[i, n] * nodes[i, k] + b0_map[n]*times[k])
     @tullio IM_E[n, k] := sin <| (Float32(pi) * 2 * $positions[i, n] * nodes[i, k] + b0_map[n]*times[k])
 
-    @tullio y_re[n] := RE_E[n, k] * w_re[k] - IM_E[n, k] * w_im[k]
-    @tullio y_im[n] := IM_E[n, k] * w_re[k] + RE_E[n, k] * w_im[k]
+    @tullio y_re[n] := RE_E[n, k] * ($weights[k]*x_re[k]) - IM_E[n, k] * ($weights[k]*x_im[k])
+    @tullio y_im[n] := IM_E[n, k] * ($weights[k]*x_re[k]) + RE_E[n, k] * ($weights[k]*x_im[k])
 
     return (y_re, y_im)
 
@@ -350,8 +344,9 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
-parameters[:windings] = 86
-parameters[:AQ] = 3.0e-2
+parameters[:windings] = 78
+parameters[:AQ] = 1e-6 * parameters[:numSamplingPerProfile]
+parameters[:correctionMap] = 1im .* quadraticFieldmap(N,M,125.0*2*pi)
 
 ## Do simulation to get the trajectory to perturb!
 acqData = simulation(I_mage, parameters)
@@ -365,8 +360,15 @@ nodesRef = CuMatrix(Float32.(nodesRef))
 image_real = CuMatrix(Float32.(real.(I_mage)))
 image_imag = CuMatrix(Float32.(imag.(I_mage)))
 
+b0_map = CuVector(Float32.(vec(quadraticFieldmap(N,M,125.0*2*pi))))
+times = CuVector(Float32.(acqData.traj[1].times))
+
+cuSig = (CuVector(Float32.(real.(vec(acqData.kdata[1])))),CuVector(Float32.(imag.(vec(acqData.kdata[1])))))
+@time simReconGT = weighted_EHMulx_Tullio_Sep(cuSig[1],cuSig[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
+showReconstructedImage(pull_from_gpu(simReconGT), imShape, true)
+
 ## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
-@time referenceSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
+@time referenceSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)), b0_map, times)
 
 ## Define Perfect Reconstruction
 @time recon1 = weighted_EHMulx_Tullio_Sep(referenceSim[1], referenceSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
@@ -394,27 +396,29 @@ showReconstructedImage(pull_from_gpu(recon2), imShape, true)
 plotError(pull_from_gpu(recon1), pull_from_gpu(recon2), imShape)
 
 ## Input Data
-#reconRef = deepcopy(recon2)
-#weights = get_weights(nodes_to_gradients(nodesRef))
+reconRef = deepcopy(recon2)
+weights = get_weights(nodes_to_gradients(nodesRef))
 
 naiveReconstruction = weighted_EHMulx_Tullio_Sep(perturbedSim[1],perturbedSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
 showReconstructedImage(pull_from_gpu(naiveReconstruction), imShape, true)
+
+
 plotError(pull_from_gpu(naiveReconstruction), pull_from_gpu(recon2), imShape)
 
 # BELOW IS COMMENTED OUT
 
-# # Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
-# # See example below: 
+# Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
+# See example below: 
 
-# # (x...) -> loss(x..., arg1, arg2...)
+# (x...) -> loss(x..., arg1, arg2...)
 
-# ## Do Training of Model for one iteration
-# # parameters = Flux.params(model)
-# # opt = ADAGrad()
+# Do Training of Model for one iteration
+# parameters = Flux.params(model)
+# opt = ADAGrad()
 
-# # for i = 1:200
-# #     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
-# # end
+# for i = 1:200
+#     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
+# end
 
 # ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
 # opt = ADAM() # Add 0.00001 as learning rate for better performance.
@@ -449,17 +453,21 @@ plotError(pull_from_gpu(naiveReconstruction), pull_from_gpu(recon2), imShape)
 
 # for i = 1:numiters
 
+#     local weights = get_weights(nodes_to_gradients(apply_td_girf(nodesRef, kernel)))
+#     local training_loss
+
 #     ps = Params([kernel])
-
-#     train_loss, back = Zygote.pullback(() -> loss(weighted_EHMulx_Tullio_Sep(perturbedSim[1], perturbedSim[2], real(apply_td_girf(nodesRef, kernel)), positionsRef, get_weights(nodes_to_gradients((apply_td_girf(nodesRef, kernel))))), reconRef), ps)
-
-#     gs = back(one(train_loss))
-
+#     @info "made it here"
+#     gs = gradient(ps) do
+#         training_loss = loss(weighted_EHMulx_Tullio_Sep(perturbedSim[1], perturbedSim[2],apply_td_girf(nodesRef,kernel),positionsRef, weights),reconRef) #+ 500*sqnorm(kernel)
+#         return training_loss
+#     end
+#     @info "made it past the gradient calculation"
 #     println(gs)
 #     # CUDA.@allowscalar dat[i] = training_loss
 #     # CUDA.@allowscalar datK[i] = Flux.Losses.mse(ker,kernel)
 
-#     println("[ITERATION $i] Train  Loss: ", train_loss)
+#     println("[ITERATION $i] Train  Loss: ", Flux.Losses.mse(ker,kernel))
 #     # print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
 
 #     Flux.update!(opt, ps, gs)
