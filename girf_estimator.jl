@@ -494,8 +494,8 @@ ker = getGaussianKernel(kernel_length)
 #ker = deltaKernel(kernel_length, 1)
 
 ## Test Setting Up Simulation (forward sim)
-N = 56
-M = 46
+N = 32
+M = 32
 imShape = (N, M)
 
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 14]
@@ -514,8 +514,8 @@ parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]
-parameters[:windings] = 30
+parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]*2
+parameters[:windings] = 3
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation to get the trajectory to perturb!
@@ -573,16 +573,16 @@ plotError(initialReconstruction, recon2, imShape)
 # end
 
 ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
-opt = ADAM(0.0002) # Add 0.00001 as learning rate for better performance.
+opt = ADAM(0.001) # Add 0.00001 as learning rate for better performance.
 
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 2000
+numiters = 1000
 
-testKernLength = kernel_length+5
+testKernLength = kernel_length+3
 
-kernel = ones(2,testKernLength)./testKernLength
+kernel = rand(2,testKernLength)./testKernLength
 
 dat = Vector{Float64}(undef,numiters)
 datK = Vector{Float64}(undef,numiters)
@@ -591,7 +591,7 @@ kernel_size_difference = size(kernel,2) - size(ker,2)
 padded_ker = hcat(zeros(2, kernel_size_difference), ker)
 
 # Test Adding Noise to the perturbed Data!
-#perturbedSim = perturbedSim + randn(length(perturbedSim)) + 2 .* 1im.*randn(length(perturbedSim))
+perturbedSim = perturbedSim + randn(length(perturbedSim)) + 2 .* 1im.*randn(length(perturbedSim))
 
 for i = 1:numiters
 
