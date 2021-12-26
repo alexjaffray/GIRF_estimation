@@ -487,11 +487,11 @@ function deltaKernel(kernel_length, shift)
 end
 
 ## Define Kernel Length
-kernel_length = 9
+kernel_length = 4
 
 ## Get ground truth kernel
-ker = getGaussianKernel(kernel_length)
-#ker = deltaKernel(kernel_length, 1)
+#ker = getGaussianKernel(kernel_length)
+ker = deltaKernel(kernel_length, 2)
 
 ## Test Setting Up Simulation (forward sim)
 N = 32
@@ -515,7 +515,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]*2
-parameters[:windings] =25
+parameters[:windings] =30
 parameters[:AQ] = 3.0e-2
 
 ## Do simulation to get the trajectory to perturb!
@@ -578,7 +578,8 @@ opt = ADAM(0.001) # Add 0.00001 as learning rate for better performance.
 sqnorm(x) = sum(abs2, x)
 
 ## Number of iterations until convergence
-numiters = 1000
+numiters = 1500
+β = 0.0001 # Regularization Parameter
 
 testKernLength = kernel_length
 
@@ -600,7 +601,8 @@ for i = 1:numiters
 
     ps = Params([kernel])
     gs = gradient(ps) do
-        training_loss = loss(weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights),reconRef) + norm(kernel,1)
+        reconEst = weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights)
+        training_loss = loss(reconEst,reconRef) + β*norm(reconEst,2) + 40*norm(kernel,1)
         return training_loss
     end
 
