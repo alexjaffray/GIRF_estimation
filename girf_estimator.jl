@@ -17,7 +17,7 @@ using
     KernelAbstractions,
     Tullio
 
-    
+
 #use pyplot backend with interactivity turned on
 pygui(true)
 
@@ -36,7 +36,7 @@ function plotTrajectoryError(x, y)
 end
 
 ## Show reconstructed image magnitude and phase including normalization if specified
-function showReconstructedImage(x,sh,do_normalization)
+function showReconstructedImage(x, sh, do_normalization)
 
     fig = figure("Reconstruction", figsize = (10, 4))
 
@@ -47,7 +47,7 @@ function showReconstructedImage(x,sh,do_normalization)
 
     ## Normalize step:
     if do_normalization
-        reshapedMag = reshapedMag./x_max
+        reshapedMag = reshapedMag ./ x_max
         x_max = 1.0
     end
 
@@ -65,7 +65,7 @@ function showReconstructedImage(x,sh,do_normalization)
 end
 
 ## Show reconstructed image magnitude and phase including normalization if specified
-function compareReconstructedImages(x,y,sh,do_normalization)
+function compareReconstructedImages(x, y, sh, do_normalization)
 
     fig = figure("Reconstruction Comparison", figsize = (10, 8))
 
@@ -81,9 +81,9 @@ function compareReconstructedImages(x,y,sh,do_normalization)
 
     ## Normalize step:
     if do_normalization
-        reshapedMag_x = reshapedMag_x./x_max
+        reshapedMag_x = reshapedMag_x ./ x_max
         x_max = 1.0
-        reshapedMag_y = reshapedMag_y./y_max
+        reshapedMag_y = reshapedMag_y ./ y_max
         y_max = 1.0
     end
 
@@ -111,37 +111,42 @@ function compareReconstructedImages(x,y,sh,do_normalization)
 end
 
 ## Plot the Euclidean error between the two trajectories
-function plotTrajectories(t_nom,t_perturbed,t_solved)
+function plotTrajectories(t_nom, t_perturbed, t_solved)
 
-    figure("Trajectory Comparison", figsize = (12,12))
-    
+    figure("Trajectory Comparison", figsize = (12, 12))
+
     gt_error = sqrt.(abs2.(t_nom[1, :]) .+ abs2.(t_nom[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :]))
     solved_error = sqrt.(abs2.(t_solved[1, :]) .+ abs2.(t_solved[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :]))
 
     subplot(211)
-    plot(t_nom',label="Nominal Trajectory")
-    plot(t_perturbed',label = "GT Trajectory")
-    plot(t_solved', label = "Solved Trajectory")
-    legend(loc="upper left")
+    plot(t_nom', label = ["Nominal kx Trajectory", "Nominal ky Trajectory"])
+    plot(t_perturbed', label = ["Ground Truth kx Trajectory", "Ground Truth ky Trajectory"])
+    plot(t_solved', label = ["Estimated kx Trajectory", "Estimated ky Trajectory"])
+    xlabel("Sampling Index")
+    ylabel("K-Space Position")
+    legend(loc = "upper right")
 
     subplot(212)
-    plot(gt_error, label="Nominal w.r.t GT")
-    plot(solved_error, label="Solved w.r.t GT")
+    plot(gt_error, label = "Nominal Error w.r.t GT")
+    plot(solved_error, label = "Estimated Error w.r.t GT")
     xlabel("Sample Index")
-    ylabel("Euclidean Distance between Nominal and Actual Positions")
-    legend(loc="upper left")
+    ylabel("Sampling Position Error")
+    legend(loc = "upper right")
 
 end
 
-function plotKernels(k_gt,k_est)
+function plotKernels(k_gt, k_est)
 
-    kernel_size_difference = size(k_est,2) - size(k_gt,2)
+    kernel_size_difference = size(k_est, 2) - size(k_gt, 2)
     k_gt_padded = hcat(zeros(2, kernel_size_difference), k_gt)
 
+    sampleIndices = -size(k_gt_padded, 2)+1:0
+
     figure("Kernel Comparison")
-    plot(k_gt_padded',label="ground truth kernel")
-    plot(k_est',label="estimate kernel")
-    legend(loc="upper left")
+    plot(sampleIndices, k_gt_padded', label = ["Ground-truth kernel (x-dir)", "Ground-truth kernel (y-dir)"])
+    plot(sampleIndices, k_est', label = ["Estimated kernel (x-dir)", "Estimated kernel (y-dir)"])
+    xlabel("Sampling Index")
+    legend(loc = "upper left")
 end
 
 ## Function for plotting the voxel-wise errors between two Complex-valued images x and y of a given shape sh
@@ -163,6 +168,20 @@ function plotError(x, y, sh)
     title("Phase Error")
     imshow(reshapedAngle, vmin = -pi, vmax = pi, cmap = "Spectral")
     colorbar()
+
+end
+
+## Loss Evolution Plotting Function
+function plotLoss(loss, kernLoss, trajLoss)
+
+    figure("Loss Over Time")
+    plot(loss ./ loss[1], label = "Recon (Training) Loss")
+    plot(kernLoss ./ kernLoss[1], label = "Kernel Loss")
+    plot(trajLoss ./ trajLoss[1], label = "Trajectory Loss")
+    legend(loc = "upper right")
+    title("Normalized Loss")
+    xlabel("Iteration")
+    ylabel("Loss")
 
 end
 
@@ -249,10 +268,11 @@ function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
 end
 
+## Calculates sampling weights for uniform radial sampling 
 function get_weights(gradients::Matrix)
 
-    @tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
-    W = W/maximum(W)
+    @tullio W[k] := sqrt <| $gradients[i, k] * $gradients[i, k] ## Define weights as magnitude of gradients
+    W = W / maximum(W)
     return W
 
 end
@@ -263,7 +283,7 @@ function weighted_EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Flo
     #DENSITY COMPENSATION FUNCTION AS DESCRIBED IN NOLL, FESSLER and SUTTON
     #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
     @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
-    @tullio y[n] := EH[n, k] * (weights[k]*$x[k])
+    @tullio y[n] := EH[n, k] * (weights[k] * $x[k])
 
     return y
 
@@ -284,7 +304,7 @@ end
 ## Get gradients from the trajectory
 function nodes_to_gradients(nodes::Matrix)
 
-    gradients = diff(hcat([0;0],nodes), dims = 2)
+    gradients = diff(hcat([0; 0], nodes), dims = 2)
     return gradients
 
 end
@@ -293,7 +313,7 @@ end
 function pad_gradients(gradients::Matrix, kernelSize)
 
     padding = zeros(kernelSize[1], kernelSize[2] - 1)
-    padded = hcat(padding,gradients)
+    padded = hcat(padding, gradients)
     return padded
 
 end
@@ -318,11 +338,11 @@ end
 function weighted_EMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights)
 
     # Separation of real and imaginary parts to play well with GPU
-    @tullio RE_E[k, n] := cos <| (- pi * 2.0 * nodes[i, k] * $positions[i, n])
-    @tullio IM_E[k, n] := sin <| (- pi * 2.0 * nodes[i, k] * $positions[i, n])
+    @tullio RE_E[k, n] := cos <| (-pi * 2.0 * nodes[i, k] * $positions[i, n])
+    @tullio IM_E[k, n] := sin <| (-pi * 2.0 * nodes[i, k] * $positions[i, n])
 
-    @tullio y_re[k] := RE_E[k, n]*x_re[n] - IM_E[k, n]*x_im[n]
-    @tullio y_im[k] := IM_E[k, n]*x_re[n] + RE_E[k, n]*x_im[n]
+    @tullio y_re[k] := RE_E[k, n] * x_re[n] - IM_E[k, n] * x_im[n]
+    @tullio y_im[k] := IM_E[k, n] * x_re[n] + RE_E[k, n] * x_im[n]
 
     w_re = weights .* y_re
     w_im = weights .* y_im
@@ -341,10 +361,10 @@ function weighted_EHMulx_Tullio_Sep(x_re, x_im, nodes, positions, weights)
     @tullio RE_E[n, k] := cos <| (pi * 2.0 * $positions[i, n] * nodes[i, k])
     @tullio IM_E[n, k] := sin <| (pi * 2.0 * $positions[i, n] * nodes[i, k])
 
-    @tullio y_re[n] := RE_E[n,k]*w_re[k] - IM_E[n,k]*w_im[k]
-    @tullio y_im[n] := IM_E[n,k]*w_re[k] + RE_E[n,k]*w_im[k]
+    @tullio y_re[n] := RE_E[n, k] * w_re[k] - IM_E[n, k] * w_im[k]
+    @tullio y_im[n] := IM_E[n, k] * w_re[k] + RE_E[n, k] * w_im[k]
 
-    return (y_re,y_im)
+    return (y_re, y_im)
 
 end
 
@@ -362,7 +382,7 @@ end
 function get_padded_gradients(nodes::Matrix, kernelSize::Tuple)
 
     g = nodes_to_gradients(nodes)
-    padded = pad_gradients(g,kernelSize)
+    padded = pad_gradients(g, kernelSize)
     return padded
 
 end
@@ -452,61 +472,65 @@ end
 function loss(x, y)
 
     #Flux.Losses.mse(real(x), real(y)) + Flux.Losses.mse(imag(x), imag(y))
-    Flux.Losses.mae(x,y)
+    Flux.Losses.mae(x, y)
 
 end
 
 ## Custom simulation function 
 function groundtruth_sim(nodes::Matrix, image, kernel, positions)
 
-    outputData = EMulx_Tullio(vec(image),apply_td_girf(nodes, kernel),positions)
+    outputData = EMulx_Tullio(vec(image), apply_td_girf(nodes, kernel), positions)
     return outputData
-
 
 end
 
-## Generates ground truth gaussian kernel
+## Generates ground truth gaussian kernel of different width in x and y directions
 # TODO: Add support for variable width
 function getGaussianKernel(kernel_length)
 
     ## Generate Ground Truth Filtering Kernel
-    ker = rand(2,kernel_length)
-    ker[1,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (5))
-    ker[2,:] = exp.(.-(-kernel_length÷2:kernel_length÷2 ).^2 ./ (20))
-    ker = ker ./ sum(ker, dims=2)    
+    ker = rand(2, kernel_length)
+    ker[1, :] = exp.(.-(-kernel_length÷2:kernel_length÷2) .^ 2 ./ (5))
+    ker[2, :] = exp.(.-(-kernel_length÷2:kernel_length÷2) .^ 2 ./ (20))
+    ker = ker ./ sum(ker, dims = 2)
 
 end
 
 ## Generates delay kernel
 function deltaKernel(kernel_length, shift)
 
-    x = zeros(2,kernel_length)
-    x[:,kernel_length - shift] .= 1.0
+    x = zeros(2, kernel_length)
+    x[:, kernel_length-shift] .= 1.0
     return x
 
 end
 
 ## Define Kernel Length
-kernel_length = 4
+kernel_length = 7
 
 ## Get ground truth kernel
-#ker = getGaussianKernel(kernel_length)
-ker = deltaKernel(kernel_length, 2)
+DelayKernel = false
 
-## Test Setting Up Simulation (forward sim)
+if !DelayKernel
+    ker = getGaussianKernel(kernel_length)
+else
+    ker = deltaKernel(kernel_length, 2)
+end
+
+## Set up Simulation (forward sim)
 N = 32
 M = 32
 imShape = (N, M)
 
+## Read in test MRI Image
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 14]
 
+## Resize the test MRI Image and reset the new Size
 img_small = ImageTransformations.imresize(B, imShape)
-#img_medium = ImageTransformations.restrict(img_small)
-
 I_mage = img_small
-
 imShape = size(I_mage)
 
+## Filter the k-space of the image corresponding to circular trajectory extent
 I_mage = circularShutterFreq!(I_mage, 1)
 
 # Simulation parameters
@@ -514,12 +538,14 @@ parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = imShape[1] * imShape[2]*2
-parameters[:windings] =30
-parameters[:AQ] = 3.0e-2
+parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
+parameters[:windings] = 30
+parameters[:AQ] = parameters[:numSamplingPerProfile] * 2e-6 # Set 2μs dwell time
 
 ## Do simulation to get the trajectory to perturb!
 acqData = simulation(I_mage, parameters)
+
+# Clone reference data
 positions = getPositions(imShape)
 nodesRef = deepcopy(acqData.traj[1].nodes)
 signalRef = deepcopy(acqData.kdata[1])
@@ -527,109 +553,117 @@ signalRef = deepcopy(acqData.kdata[1])
 ## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
 @time referenceSim = weighted_EMulx_Tullio(I_mage, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
 
-## Define Perfect Reconstruction
+## Define Perfect Reconstruction and Plot
 @time recon1 = weighted_EHMulx_Tullio(referenceSim, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
-#normalizeRecon!(recon1)
-showReconstructedImage(recon1, imShape,true)
-
+showReconstructedImage(recon1, imShape, true)
 
 ## Plot the actual nodes used for the perfect reconstruction
 figure()
 scatter(nodesRef[1, :], nodesRef[2, :])
+title("K-Space Nodes")
+xlabel("kx")
+ylabel("ky")
 
+## Generate ground truth perturbed k-space trajectory
 perturbedNodes = apply_td_girf(nodesRef, ker)
 
+## Simulate acquisition with perturbed nodes
 @time perturbedSim = weighted_EMulx_Tullio(I_mage, perturbedNodes, positions, get_weights(nodes_to_gradients(perturbedNodes)))
 
-## Plot the new nodes
+## Plot the new nodes overlaid on the old nodes
 scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
 ## Reconstruct with perturbed nodes
-@time recon2 = weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions,get_weights(nodes_to_gradients(perturbedNodes)))
-showReconstructedImage(recon2, imShape,true)
-#normalizeRecon!(recon2)
+@time recon2 = weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions, get_weights(nodes_to_gradients(perturbedNodes)))
 
+## Plot
+showReconstructedImage(recon2, imShape, true)
 plotError(recon1, recon2, imShape)
 
-## Input Data
+## Clone reference data and use as input Data
 reconRef = deepcopy(recon2)
 positionsRef = deepcopy(collect(positions))
 weights = get_weights(nodes_to_gradients(nodesRef))
 
-initialReconstruction = weighted_EHMulx_Tullio(perturbedSim,nodesRef,positionsRef, weights)
-showReconstructedImage(initialReconstruction,imShape,true)
+## Naive Reconstruction (nominal recon, perturbed signal)
+initialReconstruction = weighted_EHMulx_Tullio(perturbedSim, nodesRef, positionsRef, weights)
+showReconstructedImage(initialReconstruction, imShape, true)
 plotError(initialReconstruction, recon2, imShape)
-# Syntax for gradients is entirely based on implicit anonymous functions in Flux, and the documentation of this syntax is implicit as well. What the Flux man!
-# See example below: 
 
-# (x...) -> loss(x..., arg1, arg2...)
-
-## Do Training of Model for one iteration
-# parameters = Flux.params(model)
-# opt = ADAGrad()
-
-# for i = 1:200
-#     Flux.train!(loss, parameters, [(dataRef, reconRef, nodesRef, positions)], opt)
-# end
+########################################################################
+## Optimization Routine!
 
 ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
-opt = ADAM(0.001) # Add 0.00001 as learning rate for better performance.
-
-sqnorm(x) = sum(abs2, x)
+opt = ADAM(0.00015)
 
 ## Number of iterations until convergence
 numiters = 1500
-β = 0.0001 # Regularization Parameter
 
-testKernLength = kernel_length
+## Regularization Parameters
+α = 0.0005 # Regularization parameter for L2
+β = 10 # Regularization parameter for L1
 
-kernel = ones(2,testKernLength)./testKernLength
+## Get kernel length from g-t kernel and add additional length?
+testKernLength = kernel_length + 3
 
-dat = Vector{Float64}(undef,numiters)
-datK = Vector{Float64}(undef,numiters)
+## Initialize kernel with uniform values summing to 1
+kernel = ones(2, testKernLength) ./ testKernLength
 
-kernel_size_difference = size(kernel,2) - size(ker,2)
+## Create logging vectors
+lossTrack = Vector{Float64}(undef, numiters)
+kernelLossTrack = Vector{Float64}(undef, numiters)
+trajLossTrack = Vector{Float64}(undef, numiters)
+
+
+## Calculate kernel size difference and pad if necessary
+kernel_size_difference = size(kernel, 2) - size(ker, 2)
 padded_ker = hcat(zeros(2, kernel_size_difference), ker)
 
-# Test Adding Noise to the perturbed Data!
-perturbedSim = perturbedSim + randn(length(perturbedSim)) + 0.5 .* 1im.*randn(length(perturbedSim))
+## Add Noise to the perturbed Data!
+perturbedSim = perturbedSim + randn(length(perturbedSim)) + 0.5 .* 1im .* randn(length(perturbedSim))
 
+## Optimization Loop
 for i = 1:numiters
 
     local weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
     local training_loss
 
+    # Set kernel as tracked
     ps = Params([kernel])
+
+    # Get the gradients of the loss function w.r.t kernel and return loss
     gs = gradient(ps) do
-        reconEst = weighted_EHMulx_Tullio(perturbedSim,real(apply_td_girf(nodesRef,kernel)),positionsRef, weights)
-        training_loss = loss(reconEst,reconRef) + β*norm(reconEst,2) + 40*norm(kernel,1)
+        reconEst = weighted_EHMulx_Tullio(perturbedSim, real(apply_td_girf(nodesRef, kernel)), positionsRef, weights)
+        training_loss = loss(reconEst, recon1) + α * norm(reconEst, 2) + β * norm(kernel, 1)
         return training_loss
     end
 
-    dat[i] = training_loss
-    datK[i] = Flux.Losses.mse(padded_ker,kernel)
+    # Log the losses and print
+    lossTrack[i] = training_loss
+    kernelLossTrack[i] = Flux.Losses.mse(padded_ker, kernel)
+    trajLossTrack[i] = Flux.Losses.mse(real(apply_td_girf(nodesRef, kernel)), perturbedNodes)
 
-    print("[ITERATION $i] Train  Loss: ",dat[i],"\n")
-    print("[ITERATION $i] Kernel Loss: ", datK[i],"\n")
+    print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
+    print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
+    print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")
 
-    
-    Flux.update!(opt,ps,gs)
+
+    # Update the kernel!
+    Flux.update!(opt, ps, gs)
 
 end
 
-figure()
-plot(dat)
-plot(datK)
 
-outputTrajectory = real(apply_td_girf(nodesRef,kernel))
+## Calculate output trajectory based on estimated kernel and reconstruct with trajectory
+outputTrajectory = real(apply_td_girf(nodesRef, kernel))
+@time finalRecon = weighted_EHMulx_Tullio(perturbedSim, outputTrajectory, positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
 
-@time finalRecon = weighted_EHMulx_Tullio(perturbedSim,outputTrajectory,positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
+## Final Plotting Functions
 
-plotError(finalRecon,recon2, imShape)
+plotLoss(lossTrack, kernelLossTrack, trajLossTrack)
+plotError(finalRecon, recon2, imShape)
+showReconstructedImage(finalRecon, imShape, true)
+compareReconstructedImages(initialReconstruction, finalRecon, imShape, true)
+plotTrajectories(nodesRef, perturbedNodes, outputTrajectory)
+plotKernels(ker, kernel)
 
-showReconstructedImage(finalRecon,imShape,true)
-
-compareReconstructedImages(initialReconstruction,finalRecon,imShape,true)
-plotTrajectories(nodesRef, perturbedNodes,outputTrajectory)
-
-plotKernels(ker,kernel)
