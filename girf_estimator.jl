@@ -133,6 +133,14 @@ function plotTrajectories(t_nom, t_perturbed, t_solved)
     ylabel("Sampling Position Error")
     legend(loc = "upper right")
 
+    figure("Gradient Comparison", figsize = (12, 12))
+
+    plot(nodes_to_gradients(t_nom)', label = ["Nominal Gx", "Nominal Gy"])
+    plot(nodes_to_gradients(t_perturbed)', label = ["Ground Truth Gx", "Ground Truth Gy"])
+    plot(nodes_to_gradients(t_solved)', label = ["Estimated Gx", "Estimated Gy"])
+    xlabel("Sampling Index")
+    ylabel("Gradient")
+    legend(loc = "upper right")
 end
 
 function plotKernels(k_gt, k_est)
@@ -613,6 +621,7 @@ kernel = ones(2, testKernLength) ./ testKernLength
 lossTrack = Vector{Float64}(undef, numiters)
 kernelLossTrack = Vector{Float64}(undef, numiters)
 trajLossTrack = Vector{Float64}(undef, numiters)
+gradLossTrack = Vector{Float64}(undef,numiters)
 
 
 ## Calculate kernel size difference and pad if necessary
@@ -642,11 +651,15 @@ for i = 1:numiters
     lossTrack[i] = training_loss
     kernelLossTrack[i] = Flux.Losses.mse(padded_ker, kernel)
     trajLossTrack[i] = Flux.Losses.mse(real(apply_td_girf(nodesRef, kernel)), perturbedNodes)
+    gradLossTrack[i] = Flux.Losses.mse(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))), nodes_to_gradients(perturbedNodes))
 
-    print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
-    print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
-    print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")
-
+    if i%100 == 0
+        print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
+        print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
+        print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")
+        print("[ITERATION $i] Gradient Loss: ", gradLossTrack[i], "\n")
+        
+    end
 
     # Update the kernel!
     Flux.update!(opt, ps, gs)
