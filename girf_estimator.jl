@@ -180,12 +180,13 @@ function plotError(x, y, sh)
 end
 
 ## Loss Evolution Plotting Function
-function plotLoss(loss, kernLoss, trajLoss)
+function plotLoss(loss, kernLoss, trajLoss, gradLoss)
 
     figure("Loss Over Time")
     plot(loss ./ loss[1], label = "Recon (Training) Loss")
     plot(kernLoss ./ kernLoss[1], label = "Kernel Loss")
     plot(trajLoss ./ trajLoss[1], label = "Trajectory Loss")
+    plot(gradLoss ./ gradLoss[1], label = "Gradient Loss")
     legend(loc = "upper right")
     title("Normalized Loss")
     xlabel("Iteration")
@@ -514,7 +515,7 @@ function deltaKernel(kernel_length, shift)
 end
 
 ## Define Kernel Length
-kernel_length = 7
+kernel_length = 9
 
 ## Get ground truth kernel
 DelayKernel = false
@@ -526,8 +527,8 @@ else
 end
 
 ## Set up Simulation (forward sim)
-N = 32
-M = 32
+N = 54
+M = 48
 imShape = (N, M)
 
 ## Read in test MRI Image
@@ -608,7 +609,7 @@ opt = ADAM(0.00015)
 numiters = 1500
 
 ## Regularization Parameters
-α = 0.0005 # Regularization parameter for L2
+α = 0.0001 # Regularization parameter for L2
 β = 10 # Regularization parameter for L1
 
 ## Get kernel length from g-t kernel and add additional length?
@@ -646,9 +647,7 @@ for i = 1:numiters
         training_loss = loss(reconEst, recon1) + α * norm(reconEst, 2) + β * norm(kernel, 1)
         return training_loss
     end
-
-    # Log the losses and print
-    lossTrack[i] = training_loss
+    0
     kernelLossTrack[i] = Flux.Losses.mse(padded_ker, kernel)
     trajLossTrack[i] = Flux.Losses.mse(real(apply_td_girf(nodesRef, kernel)), perturbedNodes)
     gradLossTrack[i] = Flux.Losses.mse(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))), nodes_to_gradients(perturbedNodes))
@@ -673,7 +672,7 @@ outputTrajectory = real(apply_td_girf(nodesRef, kernel))
 
 ## Final Plotting Functions
 
-plotLoss(lossTrack, kernelLossTrack, trajLossTrack)
+plotLoss(lossTrack, kernelLossTrack, trajLossTrack, gradLossTrack)
 plotError(finalRecon, recon2, imShape)
 showReconstructedImage(finalRecon, imShape, true)
 compareReconstructedImages(initialReconstruction, finalRecon, imShape, true)
