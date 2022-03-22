@@ -600,11 +600,11 @@ opt = ADAM(0.00015)
 numiters = 1500
 
 ## Regularization Parameters
-α = 0.0005 # Regularization parameter for L2
-β = 10 # Regularization parameter for L1
+α = 0#0.0001 # Regularization parameter for L2
+β = 0#40 # Regularization parameter for L1
 
 ## Get kernel length from g-t kernel and add additional length?
-testKernLength = kernel_length + 3
+testKernLength = kernel_length
 
 ## Initialize kernel with uniform values summing to 1
 kernel = ones(2, testKernLength) ./ testKernLength
