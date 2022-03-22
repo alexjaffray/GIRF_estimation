@@ -527,8 +527,8 @@ else
 end
 
 ## Set up Simulation (forward sim)
-N = 54
-M = 48
+N = 32
+M = 32
 imShape = (N, M)
 
 ## Read in test MRI Image
@@ -548,7 +548,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
-parameters[:windings] = 30
+parameters[:windings] = 20
 parameters[:AQ] = parameters[:numSamplingPerProfile] * 2e-6 # Set 2μs dwell time
 
 ## Do simulation to get the trajectory to perturb!
@@ -652,7 +652,7 @@ for i = 1:numiters
     trajLossTrack[i] = Flux.Losses.mse(real(apply_td_girf(nodesRef, kernel)), perturbedNodes)
     gradLossTrack[i] = Flux.Losses.mse(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))), nodes_to_gradients(perturbedNodes))
 
-    if i%100 == 0
+    if i%10 == 0
         print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
         print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
         print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")

@@ -16,7 +16,8 @@ using
     LinearAlgebra,
     KernelAbstractions,
     CUDAKernels,
-    Tullio
+    Tullio,
+    ROMEO
 
 
 #use pyplot backend with interactivity turned on
@@ -59,7 +60,7 @@ function showReconstructedImage(x, sh, do_normalization)
 
     subplot(122)
     title("Phase")
-    imshow(reshapedAngle, vmin = -pi, vmax = pi, cmap = "seismic")
+    imshow(ROMEO.unwrap(reshapedAngle, dims=(1,2)), vmin = -pi, vmax = pi, cmap = "seismic")
     colorbar()
 
 
@@ -344,7 +345,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
-parameters[:windings] = 78
+parameters[:windings] = 86
 parameters[:AQ] = 1e-6 * parameters[:numSamplingPerProfile]
 parameters[:correctionMap] = 1im .* quadraticFieldmap(N,M,125.0*2*pi)
 
@@ -360,7 +361,7 @@ nodesRef = CuMatrix(Float32.(nodesRef))
 image_real = CuMatrix(Float32.(real.(I_mage)))
 image_imag = CuMatrix(Float32.(imag.(I_mage)))
 
-b0_map = CuVector(Float32.(vec(quadraticFieldmap(N,M,125.0*2*pi))))
+b0_map = CuVector(Float32.(vec(quadraticFieldmap(N,M,125.0*pi))))
 times = CuVector(Float32.(acqData.traj[1].times))
 
 cuSig = (CuVector(Float32.(real.(vec(acqData.kdata[1])))),CuVector(Float32.(imag.(vec(acqData.kdata[1])))))
@@ -371,7 +372,7 @@ showReconstructedImage(pull_from_gpu(simReconGT), imShape, true)
 @time referenceSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)), b0_map, times)
 
 ## Define Perfect Reconstruction
-@time recon1 = weighted_EHMulx_Tullio_Sep(referenceSim[1], referenceSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
+@time recon1 = weighted_EHMulx_Tullio_Sep(referenceSim[1], referenceSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)),b0_map , times)
 #normalizeRecon!(recon1)
 
 ## Show the reconstruction
