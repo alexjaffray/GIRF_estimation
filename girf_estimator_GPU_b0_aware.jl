@@ -61,7 +61,7 @@ parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
-parameters[:windings] = 86
+parameters[:windings] = 90
 parameters[:AQ] = 1e-6 * parameters[:numSamplingPerProfile]
 parameters[:correctionMap] = 1im .* quadraticFieldmap(N,M,125.0*2*pi)
 
