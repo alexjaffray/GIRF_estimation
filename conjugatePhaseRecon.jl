@@ -15,8 +15,9 @@ using
     TestImages,
     LinearAlgebra,
     KernelAbstractions,
-    Tullio
-
+    CUDAKernels,
+    Tullio,
+    ROMEO
 
 #use pyplot backend with interactivity turned on
 pygui(true)
@@ -42,7 +43,7 @@ function showReconstructedImage(x, sh, do_normalization)
 
     x_max = maximum(abs.(x))
 
-    reshapedMag = reshape(real.(x), sh[1], sh[2])
+    reshapedMag = reshape(abs.(x), sh[1], sh[2])
     reshapedAngle = reshape(angle.(x), sh[1], sh[2])
 
     ## Normalize step:
@@ -69,13 +70,13 @@ function compareReconstructedImages(x, y, sh, do_normalization)
 
     fig = figure("Reconstruction Comparison", figsize = (10, 8))
 
-    x_max = maximum(abs.(real.(x)))
-    y_max = maximum(abs.(real.(y)))
+    x_max = maximum(abs.(x))
+    y_max = maximum(abs.(y))
 
-    reshapedMag_x = reshape(real.(x), sh[1], sh[2])
+    reshapedMag_x = reshape(abs.(x), sh[1], sh[2])
     reshapedAngle_x = reshape(angle.(x), sh[1], sh[2])
 
-    reshapedMag_y = reshape(real.(y), sh[1], sh[2])
+    reshapedMag_y = reshape(abs.(y), sh[1], sh[2])
     reshapedAngle_y = reshape(angle.(y), sh[1], sh[2])
 
 
@@ -268,6 +269,17 @@ function weighted_EMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Floa
 end
 
 ## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
+function weighted_EMulx_Tullio_SENSE(x, nodes::Matrix{Float64}, positions::Matrix{Float64}, weights::Vector{Float64}, sens)
+
+    #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
+    @tullio E[k, n] := exp <| (-1.0im * pi * 2.0 * nodes[i, k] * $positions[i, n])
+    @tullio y[γ, k] := weights[k] * E[k, n] * (sens[γ,n] * $x[n])
+
+    return y
+
+end
+
+## Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
 function EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Float64})
 
     @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k])
@@ -295,6 +307,34 @@ function weighted_EHMulx_Tullio(x, nodes::Matrix{Float64}, positions::Matrix{Flo
     @tullio y[n] := EH[n, k] * (weights[k] * $x[k])
 
     return y
+
+end
+
+## Weighted Version of Matrix-Vector Multiplication using Tullio.jl. Supposedly very fast and flexible.
+function weighted_EHMulx_Tullio_SENSE(x, nodes::Matrix{Float64}, positions::Matrix{Float64}, weights::Vector{Float64}, sens::Matrix{ComplexF64})
+
+    I = getIntensityCorrection(sens)
+
+    #DENSITY COMPENSATION FUNCTION AS DESCRIBED IN NOLL, FESSLER and SUTTON
+    #@tullio W[k] := sqrt <| $gradients[i,k]*$gradients[i,k] ## Define weights as magnitude of gradients
+
+    @tullio EH[n, k] := exp <| (1.0im * pi * 2.0 * $positions[i, n] * nodes[i, k] )
+    @tullio y[γ, n] := I[n] *I[n]* conj(sens[γ,n]) * EH[n, k] * (weights[k]*$x[γ, k])
+
+    return y
+
+end
+
+function getIntensityCorrection(sens)
+
+    I₀ = sum(abs2, sens, dims=1)
+    I = 1 ./ (sqrt.(I₀))
+    I = I ./ max(I...)
+
+    figure()
+    imshow(reshape(abs.(I),192,192))
+
+    return I 
 
 end
 
@@ -515,10 +555,10 @@ function deltaKernel(kernel_length, shift)
 end
 
 ## Define Kernel Length
-kernel_length = 7
+kernel_length = 9
 
 ## Get ground truth kernel
-DelayKernel =true
+DelayKernel = false
 
 if !DelayKernel
     ker = getGaussianKernel(kernel_length)
@@ -527,13 +567,12 @@ else
 end
 
 ## Set up Simulation (forward sim)
-N = 48
-M = 42
+N = 192
+M = 192
 imShape = (N, M)
 
 ## Read in test MRI Image
 B = Float64.(TestImages.testimage("mri_stack"))[:, :, 14]
-#B = Float64.(TestImages.shepp_logan(N,M))
 
 ## Resize the test MRI Image and reset the new Size
 img_small = ImageTransformations.imresize(B, imShape)
@@ -543,14 +582,28 @@ imShape = size(I_mage)
 ## Filter the k-space of the image corresponding to circular trajectory extent
 I_mage = circularShutterFreq!(I_mage, 1)
 
+figure()
+imshow(I_mage)
+
+# B2 = zeros(size(I_mage))
+
+# B2[N÷2,M÷2] = 1
+
+# I_mage = B2
+
+sensitivity = birdcageSensitivity(N,20,Float64(1.25))
+sensitivity2 = permutedims(sensitivity, [4,2,3,1])
+sens = reshape(sensitivity2,(20,N*M))
+
 # Simulation parameters
 parameters = Dict{Symbol,Any}()
 parameters[:simulation] = "fast"
 parameters[:trajName] = "Spiral"
 parameters[:numProfiles] = 1
-parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
-parameters[:windings] = 40
+parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] *2
+parameters[:windings] = 140
 parameters[:AQ] = parameters[:numSamplingPerProfile] * 2e-6 # Set 2μs dwell time
+parameters[:senseMaps] = sensitivity
 
 ## Do simulation to get the trajectory to perturb!
 acqData = simulation(I_mage, parameters)
@@ -560,123 +613,49 @@ positions = getPositions(imShape)
 nodesRef = deepcopy(acqData.traj[1].nodes)
 signalRef = deepcopy(acqData.kdata[1])
 
-## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
-@time referenceSim = weighted_EMulx_Tullio(I_mage, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
-
-## Define Perfect Reconstruction and Plot
-@time recon1 = weighted_EHMulx_Tullio(referenceSim, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
-showReconstructedImage(recon1, imShape, true)
-
-## Plot the actual nodes used for the perfect reconstruction
-figure()
-scatter(nodesRef[1, :], nodesRef[2, :])
-title("K-Space Nodes")
-xlabel("kx")
-ylabel("ky")
-
-## Generate ground truth perturbed k-space trajectory
-perturbedNodes = apply_td_girf(nodesRef, ker)
-
 ## Simulate acquisition with perturbed nodes
-@time perturbedSim = weighted_EMulx_Tullio(I_mage, perturbedNodes, positions, get_weights(nodes_to_gradients(perturbedNodes)))
-
-## Plot the new nodes overlaid on the old nodes
-scatter(perturbedNodes[1, :], perturbedNodes[2, :])
-
-## Reconstruct with perturbed nodes
-@time recon2 = weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions, get_weights(nodes_to_gradients(perturbedNodes)))
-
-## Plot
-showReconstructedImage(recon2, imShape, true)
-plotError(recon1, recon2, imShape)
-
-## Clone reference data and use as input Data
-reconRef = deepcopy(recon2)
-positionsRef = deepcopy(collect(positions))
-weights = get_weights(nodes_to_gradients(nodesRef))
-
-## Naive Reconstruction (nominal recon, perturbed signal)
-initialReconstruction = weighted_EHMulx_Tullio(perturbedSim, nodesRef, positionsRef, weights)
-showReconstructedImage(initialReconstruction, imShape, true)
-plotError(initialReconstruction, recon2, imShape)
-
-########################################################################
-## Optimization Routine!
-
-## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
-opt = ADAM(0.0015)
-
-## Number of iterations until convergence
-numiters = 1500
-
-## Regularization Parameters
-α = 0#.001 # Regularization parameter for L2
-β = 100 # Regularization parameter for L1
-
-## Get kernel length from g-t kernel and add additional length?
-testKernLength = kernel_length
-
-## Initialize kernel with uniform values summing to 1
-kernel = ones(2, testKernLength) ./ testKernLength
-
-## Create logging vectors
-lossTrack = Vector{Float64}(undef, numiters)
-kernelLossTrack = Vector{Float64}(undef, numiters)
-trajLossTrack = Vector{Float64}(undef, numiters)
-gradLossTrack = Vector{Float64}(undef,numiters)
-
-
-## Calculate kernel size difference and pad if necessary
-kernel_size_difference = size(kernel, 2) - size(ker, 2)
-padded_ker = hcat(zeros(2, kernel_size_difference), ker)
+@time sim = weighted_EMulx_Tullio(I_mage, nodesRef, positions, get_weights(nodesRef))
 
 ## Add Noise to the perturbed Data!
-perturbedSim = perturbedSim + randn(length(perturbedSim)) + 0.5 .* 1im .* randn(length(perturbedSim))
+perturbedSim = sim #+ randn(length(sim)) + 0.5 .* 1im .* randn(length(sim))
 
-## Optimization Loop
-for i = 1:numiters
+@time dataTest = weighted_EMulx_Tullio_SENSE(I_mage, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)), sens)
 
-    local weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
-    local training_loss
 
-    # Set kernel as tracked
-    ps = Params([kernel])
+@time reconTest = weighted_EHMulx_Tullio_SENSE(dataTest, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)), sens)
 
-    # Get the gradients of the loss function w.r.t kernel and return loss
-    gs = gradient(ps) do
-        reconEst = weighted_EHMulx_Tullio(perturbedSim, real(apply_td_girf(nodesRef, kernel)), positionsRef, weights)
-        training_loss = loss(reconEst, recon1) + α * norm(reconEst, 2) + β * norm(kernel, 1)
-        return training_loss
-    end
-    
-    lossTrack[i] = training_loss
-    kernelLossTrack[i] = Flux.Losses.mse(padded_ker, kernel)
-    trajLossTrack[i] = Flux.Losses.mse(real(apply_td_girf(nodesRef, kernel)), perturbedNodes)
-    gradLossTrack[i] = Flux.Losses.mse(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))), nodes_to_gradients(perturbedNodes))
 
-    if i%10 == 0
-        print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
-        print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
-        print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")
-        print("[ITERATION $i] Gradient Loss: ", gradLossTrack[i], "\n")
-        
-    end
+@time reconTest2 = weighted_EHMulx_Tullio_SENSE(signalRef', nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)),sens)
 
-    # Update the kernel!
-    Flux.update!(opt, ps, gs)
 
-end
 
-## Calculate output trajectory based on estimated kernel and reconstruct with trajectory
-outputTrajectory = real(apply_td_girf(nodesRef, kernel))
-@time finalRecon = weighted_EHMulx_Tullio(perturbedSim, outputTrajectory, positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
+imData = permutedims(reshape(reconTest2, (20,N,N)), [2,3,1])
+imData2 = permutedims(reshape(reconTest, (20,N,N)), [2,3,1])
+naiveRecon = sum(abs2,imData,dims=3)
+naiveRecon2 = sum(abs2, imData2, dims=3)
+d = rotl90(abs.(naiveRecon[:,:,1])')
+d2 = rotr90(abs.(naiveRecon2[:,:,1])')
 
-## Final Plotting Functions
+figure()
+imshow(d)
+figure()
+imshow(d2)
 
-plotLoss(lossTrack, kernelLossTrack, trajLossTrack, gradLossTrack)
-plotError(finalRecon, recon2, imShape)
-showReconstructedImage(finalRecon, imShape, true)
-compareReconstructedImages(initialReconstruction, finalRecon, imShape, true)
-plotTrajectories(nodesRef, perturbedNodes, outputTrajectory)
-plotKernels(ker, kernel)
+figure()
+plot(naiveRecon[N÷2,:])
+plot(naiveRecon[:,M÷2])
 
+@info "Setting Parameters \n"
+params = Dict{Symbol,Any}()
+params[:reco] = "multiCoil"
+params[:reconSize] = (N,M)
+params[:regularization] = "L2"
+params[:λ] = 1.e-3
+params[:iterations] = 20
+params[:solver] = "admm"
+params[:senseMaps] = sensitivity
+
+dat = reconstruction(acqData,params)
+
+figure()
+imshow(real.(dat.data[:,:,1,1,1]))

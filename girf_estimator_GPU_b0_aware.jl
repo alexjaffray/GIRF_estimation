@@ -19,12 +19,11 @@ using
     Tullio,
     ROMEO
 
-
 #use pyplot backend with interactivity turned on
 pygui(true)
 
 ## Have to set this to the real number of threads because MRIReco.jl seems to set this to 1 when it's loaded :(
-BLAS.set_num_threads(32)
+BLAS.set_num_threads(64)
 
 include("utils.jl")
 
