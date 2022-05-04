@@ -30,14 +30,6 @@ include("utils.jl")
 ## DEBUG
 CUDA.allowscalar(false)
 
-## Define Kernel Length
-kernel_length = 3
-
-## Get ground truth kernel
-ker = getGaussianKernel(kernel_length)
-
-ker = CuMatrix(Float32.(ker))
-
 ## Test Setting Up Simulation (forward sim)
 N = 156
 M = 128
@@ -62,7 +54,7 @@ parameters[:numProfiles] = 1
 parameters[:numSamplingPerProfile] = imShape[1] * imShape[2] * 2
 parameters[:windings] = 90
 parameters[:AQ] = 1e-6 * parameters[:numSamplingPerProfile]
-parameters[:correctionMap] = 1im .* quadraticFieldmap(N,M,125.0*2*pi)
+parameters[:correctionMap] = 1im .* polarFieldmap(N,M,125.0*pi)
 
 ## Do simulation to get the trajectory to perturb!
 acqData = simulation(I_mage, parameters)
@@ -76,20 +68,19 @@ nodesRef = CuMatrix(Float32.(nodesRef))
 image_real = CuMatrix(Float32.(real.(I_mage)))
 image_imag = CuMatrix(Float32.(imag.(I_mage)))
 
-b0_map = CuVector(Float32.(vec(polarFieldmap(N,M,125.0*pi))))
+b0_map = CuVector(Float32.(vec(polarFieldmap(N,M,125.0*pi)))) # -> radians off resonance, divide by 2 pi to get Hz
 times = CuVector(Float32.(acqData.traj[1].times))
 
 cuSig = (CuVector(Float32.(real.(vec(acqData.kdata[1])))),CuVector(Float32.(imag.(vec(acqData.kdata[1])))))
 @time simReconGT = weighted_EHMulx_Tullio_Sep(cuSig[1],cuSig[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)))
 
-showReconstructedImage("Simulation Recon", pull_from_gpu(simReconGT), imShape, true)
+showReconstructedImage("Uncorrected Recon", pull_from_gpu(simReconGT), imShape, true)
 
-## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
-@time referenceSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)), b0_map, times)
+# ## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
+# @time referenceSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)), b0_map, times)
 
-## Define Perfect Reconstruction
-@time recon1 = weighted_EHMulx_Tullio_Sep(referenceSim[1], referenceSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)),b0_map , times)
-#normalizeRecon!(recon1)
+## Do B₀ Corrected Reconstruction on GPU (avoid inverse crime by using simulated signal data from MRIReco)
+@time recon1 = weighted_EHMulx_Tullio_Sep(cuSig[1], cuSig[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(nodesRef)), b0_map ./2 , times) # 2 times scaling factor for convention of MRIReco vs. Hz (NEED TO REALIZE WHY...)
 
 ## Show the reconstruction
 showReconstructedImage("B₀ Corrected Recon", pull_from_gpu(recon1), imShape, true)
@@ -98,29 +89,28 @@ showReconstructedImage("B₀ Corrected Recon", pull_from_gpu(recon1), imShape, t
 #figure()
 #scatter(nodesRef[1, :], nodesRef[2, :])
 
-perturbedNodes = apply_td_girf(nodesRef, ker)
+# perturbedNodes = apply_td_girf(nodesRef, ker)
 
-@time perturbedSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, perturbedNodes, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
+# @time perturbedSim = weighted_EMulx_Tullio_Sep(image_real, image_imag, perturbedNodes, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
 
-## Plot the new nodes
-#scatter(perturbedNodes[1, :], perturbedNodes[2, :])
+# ## Plot the new nodes
+# #scatter(perturbedNodes[1, :], perturbedNodes[2, :])
 
-## Reconstruct with perturbed nodes
-@time recon2 = weighted_EHMulx_Tullio_Sep(perturbedSim[1], perturbedSim[2], perturbedNodes, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
-showReconstructedImage("Perturbed Recon",pull_from_gpu(recon2), imShape, true)
-#normalizeRecon!(recon2)
+# ## Reconstruct with perturbed nodes
+# @time recon2 = weighted_EHMulx_Tullio_Sep(perturbedSim[1], perturbedSim[2], perturbedNodes, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
+# showReconstructedImage("Perturbed Recon",pull_from_gpu(recon2), imShape, true)
+# #normalizeRecon!(recon2)
 
-plotError("Perturbed Recon Error 1",pull_from_gpu(recon1), pull_from_gpu(recon2), imShape)
+# plotError("Perturbed Recon Error",pull_from_gpu(recon1), pull_from_gpu(recon2), imShape)
 
-## Input Data
-reconRef = deepcopy(recon2)
-weights = get_weights(nodes_to_gradients(nodesRef))
+# ## Input Data
+# reconRef = deepcopy(recon2)
+# weights = get_weights(nodes_to_gradients(nodesRef))
 
-naiveReconstruction = weighted_EHMulx_Tullio_Sep(perturbedSim[1],perturbedSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
-showReconstructedImage("Naive Recon", pull_from_gpu(naiveReconstruction), imShape, true)
+# naiveReconstruction = weighted_EHMulx_Tullio_Sep(perturbedSim[1],perturbedSim[2], nodesRef, positionsRef, get_weights(nodes_to_gradients(perturbedNodes)))
+# showReconstructedImage("Naive Recon", pull_from_gpu(naiveReconstruction), imShape, true)
 
-
-plotError("Naive Recon Error", pull_from_gpu(naiveReconstruction), pull_from_gpu(recon2), imShape)
+# plotError("Naive Recon Error", pull_from_gpu(naiveReconstruction), pull_from_gpu(recon2), imShape)
 
 # BELOW IS COMMENTED OUT
 
