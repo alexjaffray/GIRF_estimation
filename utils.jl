@@ -10,9 +10,9 @@ function plotTrajectoryError(x, y)
 end
 
 ## Show reconstructed image magnitude and phase including normalization if specified
-function showReconstructedImage(x, sh, do_normalization)
+function showReconstructedImage(figID, x, sh, do_normalization)
 
-    fig = figure("Reconstruction", figsize = (10, 4))
+    fig = figure("$figID: Reconstruction", figsize = (10, 4))
 
     x_max = maximum(abs.(x))
 
@@ -39,9 +39,9 @@ function showReconstructedImage(x, sh, do_normalization)
 end
 
 ## Function for plotting the voxel-wise errors between two Complex-valued images x and y of a given shape sh
-function plotError(x, y, sh)
+function plotError(figID, x, y, sh)
 
-    fig = figure("Voxel-wise Reconstruction Errors", figsize = (10, 4))
+    fig = figure("Voxel-wise Reconstruction Errors + $figID", figsize = (10, 4))
     absErrorTerm = Flux.Losses.mae.(abs.(x), abs.(y)) ./ abs.(x)
     angleErrorTerm = Flux.Losses.mae.(angle.(x), angle.(y))
 
