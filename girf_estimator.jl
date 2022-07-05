@@ -9,7 +9,6 @@ using
     ImageFiltering,
     ImageTransformations,
     Flux,
-    CUDA,
     NFFT,
     Zygote,
     TestImages,
