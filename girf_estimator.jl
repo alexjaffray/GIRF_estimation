@@ -111,12 +111,12 @@ function compareReconstructedImages(x, y, sh, do_normalization)
 end
 
 ## Plot the Euclidean error between the two trajectories
-function plotTrajectories(t_nom, t_perturbed, t_solved)
+function plotTrajectories(t_nom, t_perturbed, t_solved, k_nyquist)
 
     figure("Trajectory Comparison", figsize = (12, 12))
 
-    gt_error = sqrt.(abs2.(t_nom[1, :]) .+ abs2.(t_nom[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :]))
-    solved_error = sqrt.(abs2.(t_solved[1, :]) .+ abs2.(t_solved[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :]))
+    gt_error = (sqrt.(abs2.(t_nom[1, :]) .+ abs2.(t_nom[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :])))/k_nyquist
+    solved_error = (sqrt.(abs2.(t_solved[1, :]) .+ abs2.(t_solved[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :])))/k_nyquist
 
     subplot(211)
     plot(t_nom', label = ["Nominal kx Trajectory", "Nominal ky Trajectory"])
@@ -133,6 +133,14 @@ function plotTrajectories(t_nom, t_perturbed, t_solved)
     ylabel("Sampling Position Error")
     legend(loc = "upper right")
 
+    figure("Gradient Comparison", figsize = (12, 12))
+
+    plot(nodes_to_gradients(t_nom)', label = ["Nominal Gx", "Nominal Gy"])
+    plot(nodes_to_gradients(t_perturbed)', label = ["Ground Truth Gx", "Ground Truth Gy"])
+    plot(nodes_to_gradients(t_solved)', label = ["Estimated Gx", "Estimated Gy"])
+    xlabel("Sampling Index")
+    ylabel("Gradient")
+    legend(loc = "upper right")
 end
 
 function plotKernels(k_gt, k_est)
@@ -172,12 +180,13 @@ function plotError(x, y, sh)
 end
 
 ## Loss Evolution Plotting Function
-function plotLoss(loss, kernLoss, trajLoss)
+function plotLoss(loss, kernLoss, trajLoss, gradLoss)
 
     figure("Loss Over Time")
     plot(loss ./ loss[1], label = "Recon (Training) Loss")
     plot(kernLoss ./ kernLoss[1], label = "Kernel Loss")
     plot(trajLoss ./ trajLoss[1], label = "Trajectory Loss")
+    plot(gradLoss ./ gradLoss[1], label = "Gradient Loss")
     legend(loc = "upper right")
     title("Normalized Loss")
     xlabel("Iteration")
@@ -506,10 +515,10 @@ function deltaKernel(kernel_length, shift)
 end
 
 ## Define Kernel Length
-kernel_length = 7
+kernel_length = 9
 
 ## Get ground truth kernel
-DelayKernel = false
+DelayKernel = true
 
 if !DelayKernel
     ker = getGaussianKernel(kernel_length)
@@ -518,7 +527,7 @@ else
 end
 
 ## Set up Simulation (forward sim)
-N = 32
+N = 36
 M = 32
 imShape = (N, M)
 
@@ -594,14 +603,14 @@ plotError(initialReconstruction, recon2, imShape)
 ## Optimization Routine!
 
 ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
-opt = ADAM(0.00015)
+opt = ADAM(0.0015)
 
 ## Number of iterations until convergence
 numiters = 1500
 
 ## Regularization Parameters
-α = 0#0.0001 # Regularization parameter for L2
-β = 0#40 # Regularization parameter for L1
+α = 0.00 # Regularization parameter for L2
+β = 100 # Regularization parameter for L1
 
 ## Get kernel length from g-t kernel and add additional length?
 testKernLength = kernel_length
@@ -613,7 +622,11 @@ kernel = ones(2, testKernLength) ./ testKernLength
 lossTrack = Vector{Float64}(undef, numiters)
 kernelLossTrack = Vector{Float64}(undef, numiters)
 trajLossTrack = Vector{Float64}(undef, numiters)
+gradLossTrack = Vector{Float64}(undef,numiters)
 
+## Add option to store the results of every 100 iterations in reconTrack...
+store_iterations = true
+reconTrack = ComplexF64.(zeros(N,M,150))
 
 ## Calculate kernel size difference and pad if necessary
 kernel_size_difference = size(kernel, 2) - size(ker, 2)
@@ -635,18 +648,25 @@ for i = 1:numiters
     gs = gradient(ps) do
         reconEst = weighted_EHMulx_Tullio(perturbedSim, real(apply_td_girf(nodesRef, kernel)), positionsRef, weights)
         training_loss = loss(reconEst, recon1) + α * norm(reconEst, 2) + β * norm(kernel, 1)
+
+        # Store the 
+        Zygote.@ignore if i%10 == 0 && store_iterations
+            reconTrack[:,:,i÷10] = reconEst
+        end
+
         return training_loss
     end
 
-    # Log the losses and print
-    lossTrack[i] = training_loss
     kernelLossTrack[i] = Flux.Losses.mse(padded_ker, kernel)
     trajLossTrack[i] = Flux.Losses.mse(real(apply_td_girf(nodesRef, kernel)), perturbedNodes)
+    gradLossTrack[i] = Flux.Losses.mse(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))), nodes_to_gradients(perturbedNodes))
 
-    print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
-    print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
-    print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")
-
+    if i%100 == 0
+        print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
+        print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
+        print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")
+        print("[ITERATION $i] Gradient Loss: ", gradLossTrack[i], "\n")
+    end
 
     # Update the kernel!
     Flux.update!(opt, ps, gs)
@@ -658,12 +678,23 @@ end
 outputTrajectory = real(apply_td_girf(nodesRef, kernel))
 @time finalRecon = weighted_EHMulx_Tullio(perturbedSim, outputTrajectory, positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
 
+## Calculation of nyquist sampling limit
+k_n = 1/M
+if M < N
+    k_nyquist = 1/N
+end
+
 ## Final Plotting Functions
 
-plotLoss(lossTrack, kernelLossTrack, trajLossTrack)
+plotLoss(lossTrack, kernelLossTrack, trajLossTrack, gradLossTrack)
 plotError(finalRecon, recon2, imShape)
 showReconstructedImage(finalRecon, imShape, true)
 compareReconstructedImages(initialReconstruction, finalRecon, imShape, true)
-plotTrajectories(nodesRef, perturbedNodes, outputTrajectory)
+plotTrajectories(nodesRef, perturbedNodes, outputTrajectory, k_n)
 plotKernels(ker, kernel)
 
+## Plot iterative recons
+
+trackedRecon = mosaicview(reconTrack,fillvalue=0,nrow=10,npad=4,rowmajor=true)
+figure()
+imshow(abs.(trackedRecon))
