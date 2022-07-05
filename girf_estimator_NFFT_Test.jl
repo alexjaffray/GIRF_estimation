@@ -111,12 +111,12 @@ function compareReconstructedImages(x, y, sh, do_normalization)
 end
 
 ## Plot the Euclidean error between the two trajectories
-function plotTrajectories(t_nom, t_perturbed, t_solved, k_nyquist)
+function plotTrajectories(t_nom, t_perturbed, t_solved)
 
     figure("Trajectory Comparison", figsize = (12, 12))
 
-    gt_error = (sqrt.(abs2.(t_nom[1, :]) .+ abs2.(t_nom[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :])))/k_nyquist
-    solved_error = (sqrt.(abs2.(t_solved[1, :]) .+ abs2.(t_solved[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :])))/k_nyquist
+    gt_error = sqrt.(abs2.(t_nom[1, :]) .+ abs2.(t_nom[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :]))
+    solved_error = sqrt.(abs2.(t_solved[1, :]) .+ abs2.(t_solved[2, :])) - sqrt.(abs2.(t_perturbed[1, :]) + abs2.(t_perturbed[2, :]))
 
     subplot(211)
     plot(t_nom', label = ["Nominal kx Trajectory", "Nominal ky Trajectory"])
@@ -387,6 +387,15 @@ function apply_td_girf(nodes::Matrix, kernel::Matrix)
 
 end
 
+## Efficient function to apply a time domain gradient impulse response function kernel to the trajectory (2D only now)
+function apply_td_girf!(nodes::Matrix, kernel::Matrix)
+    gradients = nodes_to_gradients(nodes)
+    padded = pad_gradients(gradients, size(kernel))
+    filtered = filter_gradients(padded, kernel)
+    nodes = gradients_to_nodes(filtered)
+
+end
+
 ## Get the padded gradient waveform
 function get_padded_gradients(nodes::Matrix, kernelSize::Tuple)
 
@@ -518,7 +527,7 @@ end
 kernel_length = 7
 
 ## Get ground truth kernel
-DelayKernel = true
+DelayKernel =true
 
 if !DelayKernel
     ker = getGaussianKernel(kernel_length)
@@ -527,9 +536,8 @@ else
 end
 
 ## Set up Simulation (forward sim)
-N = 36
-M = 32
-
+N = 48
+M = 42
 imShape = (N, M)
 
 ## Read in test MRI Image
@@ -556,121 +564,60 @@ parameters[:AQ] = parameters[:numSamplingPerProfile] * 2e-6 # Set 2μs dwell tim
 ## Do simulation to get the trajectory to perturb!
 acqData = simulation(I_mage, parameters)
 
-# Clone reference data
-positions = getPositions(imShape)
-nodesRef = deepcopy(acqData.traj[1].nodes)
-signalRef = deepcopy(acqData.kdata[1])
+recoParams = defaultRecoParams()
+recoParams[:reconSize] = (N,M)
 
-## Make test simulation (neglecting T2 effects, etc...) using the tullio function 
-@time referenceSim = weighted_EMulx_Tullio(I_mage, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
+reco = reconstruction(acqData, recoParams)
 
-## Define Perfect Reconstruction and Plot
-@time recon1 = weighted_EHMulx_Tullio(referenceSim, nodesRef, positions, get_weights(nodes_to_gradients(nodesRef)))
-showReconstructedImage(recon1, imShape, true)
+acqDataPert = deepcopy(acqData)
 
-## Plot the actual nodes used for the perfect reconstruction
-figure()
-scatter(nodesRef[1, :], nodesRef[2, :])
-title("K-Space Nodes")
-xlabel("kx")
-ylabel("ky")
+acqDataPert.traj[1].nodes = apply_td_girf(acqData.traj[1].nodes, ker)
 
-## Generate ground truth perturbed k-space trajectory
-perturbedNodes = apply_td_girf(nodesRef, ker)
-
-## Simulate acquisition with perturbed nodes
-@time perturbedSim = weighted_EMulx_Tullio(I_mage, perturbedNodes, positions, get_weights(nodes_to_gradients(perturbedNodes)))
-
-## Plot the new nodes overlaid on the old nodes
-scatter(perturbedNodes[1, :], perturbedNodes[2, :])
-
-## Reconstruct with perturbed nodes
-@time recon2 = weighted_EHMulx_Tullio(perturbedSim, perturbedNodes, positions, get_weights(nodes_to_gradients(perturbedNodes)))
-
-## Plot
-showReconstructedImage(recon2, imShape, true)
-plotError(recon1, recon2, imShape)
-
-## Clone reference data and use as input Data
-reconRef = deepcopy(recon2)
-positionsRef = deepcopy(collect(positions))
-weights = get_weights(nodes_to_gradients(nodesRef))
-
-## Naive Reconstruction (nominal recon, perturbed signal)
-initialReconstruction = weighted_EHMulx_Tullio(perturbedSim, nodesRef, positionsRef, weights)
-showReconstructedImage(initialReconstruction, imShape, true)
-plotError(initialReconstruction, recon2, imShape)
-
-########################################################################
-## Optimization Routine!
+recoPert = reconstruction(acqDataPert, recoParams)
 
 ## Gradient of the sensitivity matrix is sparse so we intuitively choose ADAM as our Optimizer
 opt = ADAM(0.0015)
+numiters = 10
 
-## Number of iterations until convergence
-numiters = 1500
+kernel = ones(size(ker)) ./ kernel_length
+
 
 ## Regularization Parameters
-
 α = 0#.001 # Regularization parameter for L2
 β = 100 # Regularization parameter for L1
 
-## Get kernel length from g-t kernel and add additional length?
-testKernLength = kernel_length
-
-## Initialize kernel with uniform values summing to 1
-kernel = ones(2, testKernLength) ./ testKernLength
-
-## Create logging vectors
-lossTrack = Vector{Float64}(undef, numiters)
-kernelLossTrack = Vector{Float64}(undef, numiters)
-trajLossTrack = Vector{Float64}(undef, numiters)
-gradLossTrack = Vector{Float64}(undef,numiters)
-
-## Add option to store the results of every 100 iterations in reconTrack...
-store_iterations = true
-reconTrack = ComplexF64.(zeros(N,M,150))
-
-## Calculate kernel size difference and pad if necessary
-kernel_size_difference = size(kernel, 2) - size(ker, 2)
-padded_ker = hcat(zeros(2, kernel_size_difference), ker)
-
-## Add Noise to the perturbed Data!
-perturbedSim = perturbedSim + randn(length(perturbedSim)) + 0.5 .* 1im .* randn(length(perturbedSim))
+Zygote.@showgrad reconstruction(acqData, recoParams)
 
 ## Optimization Loop
 for i = 1:numiters
 
-    local weights = get_weights(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))))
     local training_loss
-
+    
     # Set kernel as tracked
     ps = Params([kernel])
 
     # Get the gradients of the loss function w.r.t kernel and return loss
     gs = gradient(ps) do
-        reconEst = weighted_EHMulx_Tullio(perturbedSim, real(apply_td_girf(nodesRef, kernel)), positionsRef, weights)
-        training_loss = loss(reconEst, recon1) + α * norm(reconEst, 2) + β * norm(kernel, 1)
-
-        # Store the 
-        Zygote.@ignore if i%10 == 0 && store_iterations
-            reconTrack[:,:,i÷10] = reconEst
-        end
-
+        
+        apply_td_girf!(acqData.traj[1].nodes, kernel)
+        reconEst = reconstruction(acqData,recoParams)
+        training_loss = loss(reconEst.data, reco.data) + α * norm(reconEst.data, 2) + β * norm(kernel, 1)
         return training_loss
+
     end
+    
+    # lossTrack[i] = training_loss
+    # kernelLossTrack[i] = Flux.Losses.mse(padded_ker, kernel)
+    # trajLossTrack[i] = Flux.Losses.mse(real(apply_td_girf(nodesRef, kernel)), perturbedNodes)
+    # gradLossTrack[i] = Flux.Losses.mse(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))), nodes_to_gradients(perturbedNodes))
 
-
-    kernelLossTrack[i] = Flux.Losses.mse(padded_ker, kernel)
-    trajLossTrack[i] = Flux.Losses.mse(real(apply_td_girf(nodesRef, kernel)), perturbedNodes)
-    gradLossTrack[i] = Flux.Losses.mse(nodes_to_gradients(real(apply_td_girf(nodesRef, kernel))), nodes_to_gradients(perturbedNodes))
-
-    if i%10 == 0
-        print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
-        print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
-        print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")
-        print("[ITERATION $i] Gradient Loss: ", gradLossTrack[i], "\n")
-    end
+    # if i%10 == 0
+    #     print("[ITERATION $i] Train  Loss: ", lossTrack[i], "\n")
+    #     print("[ITERATION $i] Kernel Loss: ", kernelLossTrack[i], "\n")
+    #     print("[ITERATION $i] Trajectory Loss: ", trajLossTrack[i], "\n")
+    #     print("[ITERATION $i] Gradient Loss: ", gradLossTrack[i], "\n")
+        
+    # end
 
     # Update the kernel!
     Flux.update!(opt, ps, gs)
@@ -681,23 +628,12 @@ end
 outputTrajectory = real(apply_td_girf(nodesRef, kernel))
 @time finalRecon = weighted_EHMulx_Tullio(perturbedSim, outputTrajectory, positionsRef, get_weights(nodes_to_gradients(outputTrajectory)))
 
-## Calculation of nyquist sampling limit
-k_n = 1/M
-if M < N
-    k_nyquist = 1/N
-end
-
 ## Final Plotting Functions
 
 plotLoss(lossTrack, kernelLossTrack, trajLossTrack, gradLossTrack)
 plotError(finalRecon, recon2, imShape)
 showReconstructedImage(finalRecon, imShape, true)
 compareReconstructedImages(initialReconstruction, finalRecon, imShape, true)
-plotTrajectories(nodesRef, perturbedNodes, outputTrajectory, k_n)
+plotTrajectories(nodesRef, perturbedNodes, outputTrajectory)
 plotKernels(ker, kernel)
 
-## Plot iterative recons
-
-trackedRecon = mosaicview(reconTrack,fillvalue=0,nrow=10,npad=4,rowmajor=true)
-figure()
-imshow(abs.(trackedRecon))
